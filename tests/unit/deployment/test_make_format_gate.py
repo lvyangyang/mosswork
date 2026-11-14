@@ -253,3 +253,89 @@ else:
     assert "available fixes" not in failure.stdout + failure.stderr
     assert any(row["args"][:1] == ["pytest"] for row in calls)
     assert "assert 7 == 999" in failure.stdout + failure.stderr
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_default_make_validation_expands_locked_uv_and_keeps_pip_fallback(
+    tmp_path: Path, available: bool
+) -> None:
+    make = shutil.which("make") or shutil.which("mingw32-make")
+    if make is None and os.name == "nt":
+        pytest.skip("GNU Make is required; the actual Windows publication gate supplies it")
+    assert make is not None
+    recipe = tmp_path / "Makefile"
+    shutil.copyfile(SOURCE / "Makefile", recipe)
+    environment = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MFLAGS"}}
+    result = subprocess.run(
+        [
+            make,
+            "--dry-run",
+            "lint",
+            "typecheck",
+            "test-fast",
+            "PYTEST_JOBS=1",
+            "UV=" + ("controlled-present" if available else ""),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    commands = [
+        shlex.split(line)
+        for line in result.stdout.splitlines()
+        if line.startswith(("uv run ", "ruff ", "mypy ", "pytest "))
+    ]
+    tools = [
+        ["ruff", "check", "src", "tests"],
+        ["ruff", "format", "--check", "src", "tests"],
+        ["mypy", "src/octop"],
+        ["pytest", "-n", "1", "-m", "not live and not slow"],
+    ]
+    assert commands == [["uv", "run", "--frozen", *args] if available else args for args in tools]
+
+
+@pytest.mark.parametrize("target", ["all", "precommit"])
+def test_make_failure_keeps_dependency_cause_in_the_required_interface(
+    tmp_path: Path, target: str
+) -> None:
+    make = shutil.which("make") or shutil.which("mingw32-make")
+    if make is None and os.name == "nt":
+        pytest.skip("GNU Make is required; the actual Windows publication gate supplies it")
+    assert make is not None
+    shutil.copyfile(SOURCE / "Makefile", tmp_path / "Makefile")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools/precommit.py").write_text("raise SystemExit(3)\n", encoding="utf-8")
+    cause = tmp_path / "dependency_failure.py"
+    cause.write_text(
+        "import sys\nprint('controlled dependency metadata failure', file=sys.stderr)\n"
+        "raise SystemExit(19)\n",
+        encoding="utf-8",
+    )
+    interpreter = Path(sys.executable).as_posix()
+    environment = {
+        key: value for key, value in os.environ.items() if key not in {"MAKEFLAGS", "MFLAGS"}
+    }
+    result = subprocess.run(
+        [
+            make,
+            target,
+            "RUN=" + shlex.join([interpreter, cause.as_posix()]),
+            "TEST_PYTHON=" + shlex.quote(interpreter),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode != 0
+    assert "controlled dependency metadata failure" in result.stdout + result.stderr
+    assert "For dependency metadata or network errors" in result.stdout
+    assert "make format-all" in result.stdout and "retain this failure" in result.stdout
+    assert "[typecheck]" not in result.stdout
+    assert "[test]" not in result.stdout and "[test-current]" not in result.stdout

@@ -238,7 +238,7 @@ jobs:
           uv run --frozen mypy src/octop
       - name: Verify current membership, revocation and original IM identity
         run: |
-          uv run --frozen pytest \
+          uv run --frozen pytest -n 2 \
             tests/unit/agents/test_personal_moss_identity.py \
             tests/unit/agents/test_personal_moss_access.py \
             tests/unit/identity \
@@ -262,10 +262,12 @@ jobs:
             tests/unit/gateway/test_feishu_current_dispatch_assertion.py \
             tests/unit/db/test_canonical_identity_projection.py \
             tests/unit/i18n \
+            -m 'not integration and not live' -q --junitxml=identity-results.xml
+          uv run --frozen pytest -n 0 \
             tests/unit/company_runtime/test_local_process.py \
             tests/unit/infra/test_harness_config_imports.py \
             tests/unit/company_runtime/test_desktop_capacity.py \
-            -m 'not integration and not live' -q --junitxml=identity-results.xml
+            -m 'not integration and not live' -q --junitxml=identity-startup-results.xml
           uv run --frozen pytest packages/moss-gateway/tests/channels/test_feishu.py \
             -m 'not integration and not live' -q --junitxml=gateway-feishu-results.xml
       - name: Verify knowledge adapter dependency isolation
@@ -318,6 +320,7 @@ jobs:
           name: canonical-identity-${{ runner.os }}
           path: |
             identity-results.xml
+            identity-startup-results.xml
             gateway-feishu-results.xml
             knowledge-adapter-results.xml
           if-no-files-found: ignore

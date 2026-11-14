@@ -36,7 +36,7 @@ PYPI_TOKEN ?=
 
 # Prefer uv when available; fall back to plain commands (CI / pip install -e ".[dev]")
 UV   := $(shell command -v uv 2>/dev/null)
-RUN  := $(if $(UV),uv run,)
+RUN  := $(if $(UV),uv run --frozen,)
 PYTHON := $(if $(UV),uv run python,python3)
 PIP  := $(if $(UV),uv pip,python3 -m pip)
 # Keep foreground interaction responsive; explicit worker overrides remain available.
@@ -44,7 +44,7 @@ PYTEST_JOBS ?= 2
 TEST_PYTHON := $(if $(UV),uv run --frozen python,python3)
 # The shared pytest defaults also cover direct CI invocations.
 PYTEST_FAILURE_MESSAGE := previous failures/new files first; all cases retained. Stop after first failure; in-flight tests finish. For all failures: PYTEST_ADDOPTS=--maxfail=0
-FORMAT_GATE_MESSAGE := Resolve the reported lint/format errors. Run make format-all for available fixes; refresh staged/frozen inputs, then rerun this gate.
+FORMAT_GATE_MESSAGE := Follow the original command error above. For formatting errors, run make format-all and refresh staged/frozen inputs. For dependency metadata or network errors, restore the locked environment/connectivity, retain this failure, then rerun the original gate.
 
 # ─── Help ────────────────────────────────────────────────────────────────────
 

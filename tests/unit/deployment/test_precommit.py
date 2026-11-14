@@ -1862,3 +1862,80 @@ def test_independent_ci_tools_use_two_real_workers_and_keep_failure_refusal(
     else:
         assert len(receipt["checks"]) == 1
         assert receipt["checks"][0]["returncode"] != 0
+
+
+@pytest.mark.parametrize("extra", [None, "runtime", "configuration", "unknown", "removed"])
+def test_browser_workflow_local_tools_keep_original_hosted_runtime(
+    repo: Path, extra: str | None
+) -> None:
+    for name in gate.TOOL_FILES:
+        stage(repo, name, "# Known independent validator\n")
+    seed_windows_validation_workflow(repo)
+    workflow = ".github/workflows/mosswork-browser-ci.yml"
+    stage(repo, workflow, "# Existing browser matrix\n")
+    ci_commit(repo, "browser workflow baseline")
+    base = git(repo, "rev-parse", "HEAD")
+    if extra == "removed":
+        git(repo, "rm", workflow)
+    else:
+        stage(repo, workflow, "# Current browser matrix\n")
+        if extra:
+            stage(
+                repo,
+                {
+                    "runtime": "src/octop/config.py",
+                    "configuration": "pyproject.toml",
+                    "unknown": "tools/unclassified.py",
+                }[extra],
+            )
+    assert gate.profile(repo, gate.staged_paths(repo)) == ("tools" if extra is None else "full")
+    checks = gate.commands("tools", [workflow])
+    pytest_command = next(argv for argv in checks if "pytest" in argv)
+    assert "tests/unit/deployment/test_ci_action_recipe.py" in pytest_command
+    assert "tests/unit/deployment/test_precommit.py" in pytest_command
+    ci_commit(repo, "current browser scheduling input")
+    hosted = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
+    assert hosted["runtime_matrix"] is True
+    assert hosted["windows_validation"] is False
+    assert hosted["validator_regressions"] is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/mosswork-ci.yml",
+        ".github/workflows/mosswork-dashboard-ci.yml",
+        ".github/workflows/mosswork-browser-ci.yml",
+        ".github/workflows/mosswork-identity-ci.yml",
+        ".github/actions/canonical-product-checks/action.yml",
+    ],
+)
+def test_removed_local_workflow_retains_full_fallback(repo: Path, path: str) -> None:
+    for name in gate.TOOL_FILES:
+        stage(repo, name, "# Known independent validator\n")
+    stage(repo, path, "# Existing matrix\n")
+    ci_commit(repo, "existing workflow")
+    git(repo, "rm", path)
+    assert gate.profile(repo, gate.staged_paths(repo)) == "full"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".github/workflows/mosswork-identity-ci.yml",
+        ".github/actions/canonical-product-checks/action.yml",
+    ],
+)
+def test_existing_product_ci_source_uses_tools_locally_and_full_hosted_checks(
+    repo: Path, path: str
+) -> None:
+    for name in gate.TOOL_FILES:
+        stage(repo, name, "# Known validator\n")
+    seed_windows_validation_workflow(repo)
+    base = git(repo, "rev-parse", "HEAD")
+    stage(repo, path, "# Current CI source\n")
+    assert gate.profile(repo, gate.staged_paths(repo)) == "tools"
+    ci_commit(repo, "current product CI source")
+    plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
+    assert plan["runtime_matrix"] is True and plan["validator_regressions"] is True
+    assert plan["windows_validation"] is False
