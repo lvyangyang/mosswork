@@ -777,7 +777,7 @@ def test_tools_require_complete_known_validation_scope(repo: Path) -> None:
 
 @pytest.mark.parametrize("path", ["tools/test_gate.py", "tests/unit/deployment/test_test_gate.py"])
 @pytest.mark.parametrize("extra", [None, "runtime", "configuration", "unknown", "removed"])
-def test_local_runner_scope_keeps_real_regressions_and_original_hosted_matrix(
+def test_local_runner_scope_keeps_real_regressions_and_required_platform_checks(
     repo: Path, path: str, extra: str | None
 ) -> None:
     for name in gate.TOOL_FILES:
@@ -805,8 +805,8 @@ def test_local_runner_scope_keeps_real_regressions_and_original_hosted_matrix(
     assert "--strict" in mypy_command and "tools/test_gate.py" in mypy_command
     ci_commit(repo, "current independent-runner candidate")
     hosted = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
-    assert hosted["runtime_matrix"] is True
-    assert hosted["windows_validation"] is False
+    assert hosted["runtime_matrix"] is (extra is not None)
+    assert hosted["windows_validation"] is (extra is None)
     assert hosted["validator_regressions"] is True
 
 

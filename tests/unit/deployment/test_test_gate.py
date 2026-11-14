@@ -1060,25 +1060,26 @@ def test_missing_independent_reader_cannot_accept_ci_metadata(
     assert "Independent CI validators missing" in _ci_attempt(plan)["error"]
 
 
-@pytest.mark.parametrize(
-    "name", ["Makefile", "uv.lock", "pyproject.toml", "conftest.py", "tests/support/new_helper.py"]
-)
 def test_ci_metadata_with_global_input_still_runs_full(
-    ci_gate_repo: tuple[Path, dict[str, str]], name: str
+    ci_gate_repo: tuple[Path, dict[str, str]],
 ) -> None:
     root, env = ci_gate_repo
     initial, _, _ = execute(root, env, "ci-global-base")
     assert initial.returncode == 0
-    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
-    metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
-    path = root / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    original = path.read_text(encoding="utf-8") if path.exists() else ""
-    path.write_text(original + "\n# unrelated global input\n", encoding="utf-8")
-    result, plan, calls = execute(root, env, "ci-global-required")
-    assert (
-        result.returncode == 0
-        and plan["mode"] == "full"
-        and Counter(calls) == _all_ci_fixture_calls()
-    )
-    assert "independent_ci_phase" not in _ci_attempt(plan)
+    for index, name in enumerate(
+        ("Makefile", "uv.lock", "pyproject.toml", "conftest.py", "tests/support/new_helper.py")
+    ):
+        metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+        metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original = path.read_text(encoding="utf-8") if path.exists() else ""
+        path.write_text(original + "\n# unrelated global input\n", encoding="utf-8")
+        result, plan, calls = execute(root, env, f"ci-global-required-{index}")
+        assert (
+            result.returncode == 0
+            and plan["mode"] == "full"
+            and Counter(calls) == _all_ci_fixture_calls()
+        )
+        assert name in plan["reason"]
+        assert "independent_ci_phase" not in _ci_attempt(plan)
