@@ -391,6 +391,37 @@ def cache_digest(path: Path) -> dict[str, str] | None:
     return result
 
 
+INDEPENDENT_CI_INPUTS = frozenset(
+    {
+        ".github/workflows/mosswork-ci.yml",
+        ".github/workflows/mosswork-identity-ci.yml",
+        ".github/workflows/mosswork-browser-ci.yml",
+        ".github/actions/canonical-product-checks/action.yml",
+        "tools/precommit.py",
+    }
+)
+INDEPENDENT_CI_TESTS = (
+    "tests/unit/deployment/test_precommit.py",
+    "tests/unit/deployment/test_make_format_gate.py",
+    "tests/unit/deployment/test_hook_staging.py",
+    "tests/unit/deployment/test_frontend_gate.py",
+    "tests/unit/deployment/test_export_public_source.py",
+    "tests/unit/deployment/test_ci_identity_reuse.py",
+    "tests/unit/deployment/test_ci_action_recipe.py",
+    "tests/unit/deployment/test_browser_worker_acceptance.py",
+    "tests/unit/deployment/test_make_testmon.py",
+)
+
+
+def independent_ci_changes(previous: dict[str, str], current: dict[str, str]) -> list[str]:
+    """Only modifications to these already-known local CI inputs can use two phases."""
+    return sorted(
+        name
+        for name in INDEPENDENT_CI_INPUTS
+        if name in previous and name in current and previous[name] != current[name]
+    )
+
+
 def full_test_inputs(previous: dict[str, str], current: dict[str, str]) -> list[str]:
     """Name inputs that cannot use the existing actual Python dependency graph."""
     changed = {p for p in previous.keys() | current.keys() if previous.get(p) != current.get(p)}
@@ -416,6 +447,8 @@ def full_test_inputs(previous: dict[str, str], current: dict[str, str]) -> list[
                     and path.name.startswith("test_")
                 )
             )
+        if not eligible and name in INDEPENDENT_CI_INPUTS:
+            eligible = name in previous and name in current
         if not eligible:
             blocked.append(name)
     return blocked
@@ -642,6 +675,84 @@ def run_locked(
     )
     started = time.monotonic()
     try:
+        ci_changes = independent_ci_changes(previous.get("inputs", {}), before) if reusable else []
+        attempt["independent_ci_inputs"] = ci_changes
+        if ci_changes:
+            missing = [
+                name
+                for name in INDEPENDENT_CI_TESTS
+                if not (root / name).is_file() or (root / name).is_symlink()
+            ]
+            if missing:
+                raise ValueError(
+                    "Independent CI validators missing; restore the original files before affected application validation: "
+                    + json.dumps(missing)
+                )
+            ci_report = storage / (str(time.time_ns()) + "-ci-" + nonce + ".session.json")
+            ci_junit = ci_report.with_suffix(".xml")
+            ci_argv = [
+                *runner,
+                "pytest",
+                "--rootdir",
+                str(root),
+                "-c",
+                str(root / "pyproject.toml"),
+                "--testmon-noselect",
+                *INDEPENDENT_CI_TESTS,
+                "-m",
+                "not live",
+                "-n",
+                workers,
+                "--gate-report=" + str(ci_report),
+                "--gate-nonce=" + nonce,
+                "--gate-datafile=" + str(graph),
+                "--junitxml=" + str(ci_junit),
+            ]
+            print(
+                "TEST_GATE: CI-only metadata changed; run all original independent CI validators before affected application cases. Unknown/configuration inputs, missing graphs and changed environments retain the full fallback.",
+                flush=True,
+            )
+            phase = {
+                "argv": ci_argv,
+                "session_path": str(ci_report),
+                "junit_path": str(ci_junit),
+                "passed": False,
+            }
+            attempt["independent_ci_phase"] = phase
+            ci_process = subprocess.run(ci_argv, cwd=root, env=child_environment, check=False)
+            ci_session = (
+                json.loads(ci_report.read_text(encoding="utf-8")) if ci_report.is_file() else {}
+            )
+            phase.update(exit_code=ci_process.returncode, session=ci_session)
+            if ci_junit.is_file():
+                phase["junit_sha256"] = hashlib.sha256(ci_junit.read_bytes()).hexdigest()
+            if not isinstance(ci_session, dict) or not (
+                ci_process.returncode == 0
+                and all(
+                    type(ci_session.get(key)) is int
+                    for key in ("exit_code", "collected", "passed", "failed", "errors")
+                )
+                and ci_session.get("nonce") == nonce
+                and ci_session.get("root") == str(root)
+                and ci_session.get("exit_code") == 0
+                and ci_session.get("collect_only") is False
+                and ci_session.get("collected", 0) > 0
+                and ci_session.get("passed", 0) > 0
+                and ci_junit.is_file()
+                and ci_session.get("failed") == 0
+                and ci_session.get("errors") == 0
+                and ci_session.get("worker_crashed") is False
+                and ci_session.get("interrupted") is False
+                and ci_session.get("maxfail_stop") is False
+            ):
+                raise ValueError(
+                    "Independent CI validation failed or lacks actual completion; affected application cases did not start. Retain this attempt and fix the original error before rerunning make all."
+                )
+            if inputs(root) != before or environment(workers) != env:
+                raise ValueError(
+                    "Source/environment changed during independent CI validation; retain the incomplete attempt and rerun on frozen inputs."
+                )
+            phase["passed"] = True
         process = subprocess.run(argv, cwd=root, env=child_environment, check=False)
         attempt["exit_code"] = process.returncode
         session = (
