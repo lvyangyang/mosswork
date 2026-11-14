@@ -69,6 +69,8 @@ RELEASE_ONLY_INPUTS = ROOT_DOCS | {
 }
 WINDOWS_VALIDATION_INPUTS = frozenset(
     {
+        "tools/test_gate.py",
+        "tests/unit/deployment/test_test_gate.py",
         "tools/precommit.py",
         "tools/frontend_gate.py",
         "tests/unit/deployment/test_frontend_gate.py",
