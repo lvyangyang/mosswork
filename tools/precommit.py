@@ -81,7 +81,7 @@ WINDOWS_VALIDATION_INPUTS = frozenset(
     }
 )
 WINDOWS_VALIDATION_RECIPE_SHA256 = (
-    "e7b9820eb2b578c18ece2b06dc04ba6f8998284b2df099705f75df5f09838737"
+    "e8d9be38f41a5a8b13015df282d6b82f6b215f6a03a13e7aa423f4845778e9a3"
 )
 WINDOWS_VALIDATION_RECIPE_ACTIONS = (".github/actions/canonical-product-checks/action.yml",)
 

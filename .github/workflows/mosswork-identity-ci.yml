@@ -265,7 +265,7 @@ jobs:
           if [[ -n "${{ steps.functional_fixture_storage.outputs.base }}" ]]; then
             fixture_args=(--basetemp "${{ steps.functional_fixture_storage.outputs.base }}/cohort-1")
           fi
-          uv run --frozen pytest -n "${{ runner.os == 'Windows' && '0' || '2' }}" \
+          uv run --frozen pytest -n "2" \
             tests/unit/agents/test_personal_moss_identity.py \
             tests/unit/agents/test_personal_moss_access.py \
             tests/unit/identity \
