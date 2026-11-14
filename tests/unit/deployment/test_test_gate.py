@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
+from tools import test_gate as gate
 
 SOURCE = Path(__file__).resolve().parents[3]
 
@@ -860,3 +864,221 @@ def test_unknown_helpers_and_removed_tests_keep_full_run_and_name_cli_inputs(
     removed, plan, calls = execute(root, env, "removed-test")
     assert removed.returncode == 0 and plan["mode"] == "full" and calls == ["first"]
     assert "tests/test_second.py" in plan["reason"]
+
+
+_CI_INPUTS = (
+    ".github/workflows/mosswork-ci.yml",
+    ".github/workflows/mosswork-identity-ci.yml",
+    ".github/workflows/mosswork-browser-ci.yml",
+    ".github/actions/canonical-product-checks/action.yml",
+    "tools/precommit.py",
+)
+_CI_READERS = (
+    "tests/unit/deployment/test_precommit.py",
+    "tests/unit/deployment/test_make_format_gate.py",
+    "tests/unit/deployment/test_hook_staging.py",
+    "tests/unit/deployment/test_frontend_gate.py",
+    "tests/unit/deployment/test_export_public_source.py",
+    "tests/unit/deployment/test_ci_identity_reuse.py",
+    "tests/unit/deployment/test_ci_action_recipe.py",
+    "tests/unit/deployment/test_browser_worker_acceptance.py",
+    "tests/unit/deployment/test_make_testmon.py",
+)
+
+
+@pytest.fixture
+def ci_gate_repo(gate_repo: tuple[Path, dict[str, str]]) -> tuple[Path, dict[str, str]]:
+    root, environment = gate_repo
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    for name in _CI_INPUTS:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# enabled: true\n", encoding="utf-8")
+    for index, name in enumerate(_CI_READERS):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"from first import value\nfrom pathlib import Path\ndef test_ci_{index}():\n"
+            f"    with Path('output/observed').open('a') as f: f.write('ci{index}\\n')\n"
+            "    assert 'enabled: true' in Path('.github/workflows/mosswork-identity-ci.yml').read_text()\n"
+            "    assert value() in (0, 1, 2)\n",
+            encoding="utf-8",
+        )
+    return root, environment
+
+
+def _ci_attempt(plan: dict) -> dict:
+    return json.loads(Path(plan["receipt"]).read_text(encoding="utf-8"))
+
+
+def _all_ci_fixture_calls() -> Counter:
+    return Counter({**{"ci" + str(i): 1 for i in range(9)}, "first": 1, "second": 1})
+
+
+def test_known_ci_scope_is_exact_and_never_accepts_additions_or_removals() -> None:
+    assert frozenset(_CI_INPUTS) == gate.INDEPENDENT_CI_INPUTS
+    assert gate.INDEPENDENT_CI_TESTS == _CI_READERS
+    for name in _CI_INPUTS:
+        assert gate.full_test_inputs({name: "old"}, {name: "new"}) == []
+        assert gate.full_test_inputs({}, {name: "new"}) == [name]
+        assert gate.full_test_inputs({name: "old"}, {}) == [name]
+    for name in ("Makefile", "uv.lock", "pyproject.toml", "conftest.py", "tests/support/helper.py"):
+        assert gate.full_test_inputs({name: "old"}, {name: "new"}) == [name]
+
+
+def test_real_ci_phase_preserves_graph_and_both_junit_records(
+    ci_gate_repo: tuple[Path, dict[str, str]],
+) -> None:
+    root, env = ci_gate_repo
+    initial, old, calls = execute(root, env, "ci-initial")
+    assert initial.returncode == 0 and Counter(calls) == _all_ci_fixture_calls()
+    (root / "src/first.py").write_text("def value():\n    return 2\n", encoding="utf-8")
+    test = root / "tests/test_first.py"
+    test.write_text(
+        test.read_text().replace("assert value() == 1", "assert value() == 2"), encoding="utf-8"
+    )
+    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+    metadata.write_text(metadata.read_text() + "# revision 2\n", encoding="utf-8")
+    result, plan, calls = execute(root, env, "ci-and-app")
+    assert result.returncode == 0 and plan["mode"] == "affected" and plan["graph"] == old["graph"]
+    assert Counter(calls) == _all_ci_fixture_calls() - Counter({"second": 1})
+    attempt = _ci_attempt(plan)
+    phase = attempt["independent_ci_phase"]
+    assert phase["passed"] and phase["session"]["passed"] == 9
+    assert attempt["pytest_session"]["passed"] == 1
+    junit = Path(phase["junit_path"])
+    assert junit.is_file() and junit != root / "output/ci-and-app.xml"
+    assert hashlib.sha256(junit.read_bytes()).hexdigest() == phase["junit_sha256"]
+    assert (root / "output/ci-and-app.xml").is_file()
+
+
+def test_ci_failure_stops_app_and_retains_full_then_failed_graph_recovery(
+    ci_gate_repo: tuple[Path, dict[str, str]],
+) -> None:
+    root, env = ci_gate_repo
+    initial, base, _ = execute(root, env, "ci-recovery-base")
+    assert initial.returncode == 0
+    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+    metadata.write_text("enabled: false\n", encoding="utf-8")
+    failed, plan, calls = execute(root, env, "ci-first-failure")
+    assert failed.returncode != 0 and calls and all(name.startswith("ci") for name in calls)
+    attempt = _ci_attempt(plan)
+    assert not attempt["passed"] and not attempt["independent_ci_phase"]["passed"]
+    assert (root / ".git/mosswork-test-gate/incomplete.json").exists()
+    metadata.write_text("enabled: true\n# fixed\n", encoding="utf-8")
+    repaired, new, calls = execute(root, env, "ci-recovery-full")
+    assert repaired.returncode == 0 and new["mode"] == "full" and new["graph"] != base["graph"]
+    assert Counter(calls) == _all_ci_fixture_calls()
+    (root / "src/first.py").write_text("def value():\n    return 0\n", encoding="utf-8")
+    metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
+    app_failed, plan, calls = execute(root, env, "ci-then-app-failure")
+    assert app_failed.returncode != 0 and "first" in calls and "second" not in calls
+    attempt = _ci_attempt(plan)
+    assert attempt["independent_ci_phase"]["passed"] and attempt["pytest_session"]["failed"] == 1
+    assert attempt["trusted_graph"] and not attempt["passed"]
+    (root / "src/first.py").write_text("def value():\n    return 1\n", encoding="utf-8")
+    result, plan, calls = execute(root, env, "ci-original-failed-recovery")
+    assert result.returncode == 0 and plan["mode"] == "affected" and plan["graph"] == new["graph"]
+    assert Counter(calls) == _all_ci_fixture_calls() - Counter({"second": 1})
+    assert "independent_ci_phase" not in _ci_attempt(plan)
+
+
+def test_ci_source_drift_refuses_before_app_cases(
+    ci_gate_repo: tuple[Path, dict[str, str]],
+) -> None:
+    root, env = ci_gate_repo
+    reader = root / _CI_READERS[0]
+    initial, _, _ = execute(root, env, "ci-drift-base")
+    assert initial.returncode == 0
+    reader.write_text(
+        reader.read_text() + "    Path('src/second.py').write_text('DRIFT = True')\n",
+        encoding="utf-8",
+    )
+    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+    metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
+    result, plan, calls = execute(root, env, "ci-source-drift")
+    assert result.returncode != 0 and all(name.startswith("ci") for name in calls)
+    assert "Source/environment changed during independent CI" in _ci_attempt(plan)["error"]
+    assert (root / ".git/mosswork-test-gate/incomplete.json").exists()
+
+
+@pytest.mark.parametrize("completion", ["missing", "malformed-count"])
+def test_ci_shell_zero_without_actual_completion_refuses_before_app(
+    ci_gate_repo: tuple[Path, dict[str, str]], completion: str
+) -> None:
+    root, env = ci_gate_repo
+    path = root / "tools/test_gate.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    class ControlledCIExecutor(ast.NodeTransformer):
+        changed = 0
+
+        def visit_Assign(self, node: ast.Assign):
+            if not any(
+                isinstance(target, ast.Name) and target.id == "ci_process"
+                for target in node.targets
+            ):
+                return self.generic_visit(node)
+            self.changed += 1
+            node.value = ast.parse("subprocess.CompletedProcess(ci_argv, 0)", mode="eval").body
+            if completion == "missing":
+                return node
+            fake = ast.parse(
+                'ci_report.write_text(json.dumps(dict(nonce=nonce, root=str(root), exit_code=0, collect_only=False, collected=1, passed="wrong type", failed=0, errors=0, worker_crashed=False, interrupted=False, maxfail_stop=False)), encoding="utf-8")\n'
+                'ci_junit.write_text("explicit malformed private negative control", encoding="utf-8")\n'
+            ).body
+            return [*fake, node]
+
+    controlled = ControlledCIExecutor()
+    tree = controlled.visit(tree)
+    assert controlled.changed == 1
+    path.write_text(ast.unparse(ast.fix_missing_locations(tree)) + "\n", encoding="utf-8")
+    initial, _, _ = execute(root, env, "ci-zero-base")
+    assert initial.returncode == 0
+    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+    metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
+    result, plan, calls = execute(root, env, "ci-zero-no-report")
+    assert result.returncode != 0 and calls == []
+    assert _ci_attempt(plan)["independent_ci_phase"]["exit_code"] == 0
+    assert (
+        "Independent CI validation failed or lacks actual completion" in _ci_attempt(plan)["error"]
+    )
+    assert (root / ".git/mosswork-test-gate/incomplete.json").exists()
+
+
+def test_missing_independent_reader_cannot_accept_ci_metadata(
+    ci_gate_repo: tuple[Path, dict[str, str]],
+) -> None:
+    root, env = ci_gate_repo
+    (root / _CI_READERS[-1]).unlink()
+    initial, _, _ = execute(root, env, "ci-missing-base")
+    assert initial.returncode == 0
+    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+    metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
+    result, plan, calls = execute(root, env, "ci-missing-reader")
+    assert result.returncode != 0 and calls == []
+    assert "Independent CI validators missing" in _ci_attempt(plan)["error"]
+
+
+@pytest.mark.parametrize(
+    "name", ["Makefile", "uv.lock", "pyproject.toml", "conftest.py", "tests/support/new_helper.py"]
+)
+def test_ci_metadata_with_global_input_still_runs_full(
+    ci_gate_repo: tuple[Path, dict[str, str]], name: str
+) -> None:
+    root, env = ci_gate_repo
+    initial, _, _ = execute(root, env, "ci-global-base")
+    assert initial.returncode == 0
+    metadata = root / ".github/workflows/mosswork-identity-ci.yml"
+    metadata.write_text(metadata.read_text() + "# revision\n", encoding="utf-8")
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    path.write_text(original + "\n# unrelated global input\n", encoding="utf-8")
+    result, plan, calls = execute(root, env, "ci-global-required")
+    assert (
+        result.returncode == 0
+        and plan["mode"] == "full"
+        and Counter(calls) == _all_ci_fixture_calls()
+    )
+    assert "independent_ci_phase" not in _ci_attempt(plan)
