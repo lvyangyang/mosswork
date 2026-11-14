@@ -98,7 +98,7 @@ def _pytest_commands(body: str) -> list[list[str]]:
     ]
 
 
-def test_canonical_ci_two_workers_preserve_all_original_commands() -> None:
+def test_canonical_ci_platform_workers_preserve_all_original_commands() -> None:
     source = Path(__file__).resolve().parents[3]
     action = yaml.safe_load(
         (source / ".github/actions/canonical-product-checks/action.yml").read_text(encoding="utf-8")
@@ -111,7 +111,7 @@ def test_canonical_ci_two_workers_preserve_all_original_commands() -> None:
     for argv in actual:
         assert argv.count("-n") == 1
         position = argv.index("-n")
-        assert argv[position + 1] == "2"
+        assert argv[position + 1] == "${{ runner.os == 'Windows' && '0' || '2' }}"
         original.append(argv[:position] + argv[position + 2 :])
     assert (
         hashlib.sha256(json.dumps(original, separators=(",", ":")).encode()).hexdigest()
@@ -133,7 +133,7 @@ def test_identity_ci_keeps_original_paths_markers_and_serial_startup_boundaries(
     actual = _pytest_commands(main["run"])
     assert len(actual) == 3
     parallel, serial, gateway = actual
-    assert parallel[parallel.index("-n") + 1] == "2"
+    assert parallel[parallel.index("-n") + 1] == "${{ runner.os == 'Windows' && '0' || '2' }}"
     assert serial[serial.index("-n") + 1] == "0"
     sensitive = [
         "tests/unit/company_runtime/test_local_process.py",

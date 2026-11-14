@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -13,6 +14,7 @@ from tests.unit.identity import test_canonical_business_composition as business
 from tests.unit.identity import test_canonical_organization_members_port as organization
 from tests.unit.identity import test_human_sessions as human_sessions
 from tests.unit.identity import test_human_tokens as tokens
+from tests.unit.identity import test_model_credentials as models
 from tests.unit.identity.test_canonical_business_composition import environment as environment
 from tests.unit.identity.test_canonical_human_request_projection import product as product
 from tests.unit.identity.test_canonical_organization_members_port import members as members
@@ -122,3 +124,59 @@ def test_failed_token_fixture_setup_commits_no_partial_schema(
             ).fetchall()
             == []
         )
+
+
+def test_model_ddl_and_seed_share_one_original_transaction(
+    legacy_db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    connect = sqlite3.connect
+    with closing(connect(tmp_path / "default-model-settings.sqlite")) as defaults:
+        expected = {
+            key: defaults.execute("PRAGMA " + key).fetchone()[0]
+            for key in ("synchronous", "journal_mode", "foreign_keys")
+        }
+    connections: list[sqlite3.Connection] = []
+    traced: list[tuple[str, bool]] = []
+
+    def observe(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection = connect(*args, **kwargs)
+        connections.append(connection)
+        connection.set_trace_callback(lambda sql: traced.append((sql, connection.in_transaction)))
+        return connection
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(models, "sqlite3", SimpleNamespace(connect=observe))
+            models._load(legacy_db, models._case("original_organization_member_writer_and_reader"))
+        assert len(connections) == 1
+        connection = connections[0]
+        ddl = [
+            active
+            for sql, active in traced
+            if sql.lstrip().upper().startswith(("CREATE ", "ALTER "))
+        ]
+        seeds = [active for sql, active in traced if sql.lstrip().upper().startswith("INSERT ")]
+        assert len(ddl) == 50 and all(ddl)
+        assert seeds and all(seeds)
+        assert not connection.in_transaction
+        assert {
+            key: connection.execute("PRAGMA " + key).fetchone()[0] for key in expected
+        } == expected
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        for connection in connections:
+            connection.set_trace_callback(None)
+            connection.close()
+
+
+def test_failed_model_fixture_setup_preserves_the_original_database(legacy_db: Path) -> None:
+    with closing(sqlite3.connect(legacy_db)) as db:
+        before = list(db.iterdump())
+    case = copy.deepcopy(models._case("original_organization_member_writer_and_reader"))
+    case["changes"].append({"sql": "UPDATE users SET missing_fixture_column=1", "params": []})
+    with pytest.raises(sqlite3.OperationalError, match="missing_fixture_column"):
+        models._load(legacy_db, case)
+    with closing(sqlite3.connect(legacy_db)) as db:
+        assert list(db.iterdump()) == before
+        assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
