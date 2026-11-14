@@ -114,7 +114,7 @@ def test_canonical_ci_platform_workers_preserve_all_original_commands() -> None:
     for argv in actual:
         assert argv.count("-n") == 1
         position = argv.index("-n")
-        assert argv[position + 1] == "2"
+        assert argv[position + 1] == "${{ runner.os == 'Windows' && '0' || '2' }}"
         original.append(argv[:position] + argv[position + 2 :])
     assert (
         hashlib.sha256(json.dumps(original, separators=(",", ":")).encode()).hexdigest()
