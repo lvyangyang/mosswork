@@ -47,15 +47,23 @@ def change(path, sql, parameters=()):
         db.execute(sql, parameters)
 
 
-@pytest.fixture
-async def human(tmp_path):
-    path = tmp_path / "canonical.sqlite"
+def _initialize_human_database(path):
+    fixture = Path(__file__).parents[1] / "db/fixtures"
     with sqlite3.connect(path) as db:
-        db.executescript(_FROZEN_SCHEMA + "ALTER TABLE users ADD COLUMN phone TEXT;")
+        db.executescript(
+            "BEGIN;\n"
+            + (_FROZEN_SCHEMA + "ALTER TABLE users ADD COLUMN phone TEXT;")
+            + (
+                (fixture / "retained_ontology_103.sql")
+                .read_text()
+                .split("CREATE TABLE IF NOT EXISTS ontology_session_bindings")[0]
+            )
+            + ((fixture / "retained_mcp_103.sql").read_text())
+            + ((fixture / "retained_mcp_audit_103.sql").read_text())
+        )
         db.execute("INSERT INTO organizations VALUES (?, 'Personal', 1)", (_IDS["homeOrg"],))
         db.execute(
-            "INSERT INTO users(id,org_id,email,name,role,status,created_at,phone) "
-            "VALUES (?,?,'local@example.test','human','admin','active',1,'13900000001')",
+            "INSERT INTO users(id,org_id,email,name,role,status,created_at,phone) VALUES (?,?,'local@example.test','human','admin','active',1,'13900000001')",
             (_IDS["homeMember"], _IDS["homeOrg"]),
         )
         db.execute(
@@ -65,33 +73,24 @@ async def human(tmp_path):
             "INSERT INTO human_account_memberships VALUES (?,?,?,1)",
             (_IDS["account"], _IDS["homeOrg"], _IDS["homeMember"]),
         )
-        fixture = Path(__file__).parents[1] / "db/fixtures"
-        # Only the original project CREATE/INDEX; no native/session table exists.
-        db.executescript(
-            (fixture / "retained_ontology_103.sql")
-            .read_text()
-            .split("CREATE TABLE IF NOT EXISTS ontology_session_bindings")[0]
-        )
-        db.executescript((fixture / "retained_mcp_103.sql").read_text())
-        db.executescript((fixture / "retained_mcp_audit_103.sql").read_text())
         db.execute(
-            "INSERT INTO ontology_projects VALUES ('project',?,'authority','worker','model',"
-            "'[\"source\"]',1,1,1)",
+            "INSERT INTO ontology_projects VALUES ('project',?,'authority','worker','model','[\"source\"]',1,1,1)",
             (_IDS["homeOrg"],),
         )
         db.execute(
-            "INSERT INTO mcp_servers(id,org_id,name,scope,owner_type,owner_id,mcp_type,url,"
-            "status,created_by,created_at,updated_at) VALUES "
-            "('worker',?,'worker','org','system',?,'http','http://127.0.0.1:1/mcp',"
-            "'enabled','fixture-admin',1,1)",
+            "INSERT INTO mcp_servers(id,org_id,name,scope,owner_type,owner_id,mcp_type,url,status,created_by,created_at,updated_at) VALUES ('worker',?,'worker','org','system',?,'http','http://127.0.0.1:1/mcp','enabled','fixture-admin',1,1)",
             (_IDS["homeOrg"], _IDS["homeOrg"]),
         )
         db.execute(
-            "INSERT INTO mcp_policies(id,org_id,allow_http_sse_mcp,allow_external_network,"
-            "domain_whitelist_json,created_by,created_at,updated_at) "
-            "VALUES ('policy',?,1,1,'[\"127.0.0.1\"]','fixture-admin',1,1)",
+            "INSERT INTO mcp_policies(id,org_id,allow_http_sse_mcp,allow_external_network,domain_whitelist_json,created_by,created_at,updated_at) VALUES ('policy',?,1,1,'[\"127.0.0.1\"]','fixture-admin',1,1)",
             (_IDS["homeOrg"],),
         )
+
+
+@pytest.fixture
+async def human(tmp_path):
+    path = tmp_path / "canonical.sqlite"
+    _initialize_human_database(path)
     product = SqlitePool(tmp_path / "separate-product.sqlite")
     run_migrations(product)
     now = _FIXTURE["verificationTime"]
