@@ -53,6 +53,9 @@ TOOL_SCOPE = frozenset(TOOL_FILES) | {
     ".githooks/pre-commit",
     ".github/workflows/mosswork-ci.yml",
     ".github/workflows/mosswork-dashboard-ci.yml",
+    ".github/workflows/mosswork-browser-ci.yml",
+    ".github/workflows/mosswork-identity-ci.yml",
+    ".github/actions/canonical-product-checks/action.yml",
     "AGENTS.md",
     "Makefile",
 }
@@ -78,7 +81,7 @@ WINDOWS_VALIDATION_INPUTS = frozenset(
     }
 )
 WINDOWS_VALIDATION_RECIPE_SHA256 = (
-    "824241afb0a9ca0b5cd27361b7c5b25b2d8b522daeb3beb141b55d5d1b86fb29"
+    "46de9dec514b75919cf10e5c0e3dc47e9d39ce1c84b5511eddb1419975dda190"
 )
 WINDOWS_VALIDATION_RECIPE_ACTIONS = (".github/actions/canonical-product-checks/action.yml",)
 
@@ -556,6 +559,8 @@ def profile(root: Path, changed: list[str]) -> str:
             return "full"  # Symlinks, submodules and unresolved entries stay conservative.
     if all(documentation(path) for path in changed):
         return "docs"
+    if any(path in TOOL_SCOPE and not (root / path).is_file() for path in changed):
+        return "full"
     scope = TOOL_SCOPE
     if ".gitattributes" in changed:
         if git(root, "show", ":.gitattributes").strip() != b".githooks/* text eol=lf":
