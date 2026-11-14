@@ -206,12 +206,39 @@ jobs:
         if: ${{ matrix.suite == 'interop' }}
         env:
           CI_VALIDATOR_REGRESSIONS: ${{ needs.ci-scope.outputs.validator_regressions }}
+      - name: Select fresh Windows functional fixture storage
+        id: interop_fixture_storage
+        if: runner.os == 'Windows' && matrix.suite == 'interop'
+        shell: bash
+        run: |
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import sys
+          import tempfile
+          import shlex
+          system = Path(tempfile.gettempdir()).resolve()
+          runner = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+          assert runner.is_dir() and "\n" not in str(runner) and "\r" not in str(runner)
+          explicit = any(arg == "--basetemp" or arg.startswith("--basetemp=") for arg in shlex.split(os.environ.get("PYTEST_ADDOPTS", "")))
+          base = tempfile.mkdtemp(prefix="mosswork-functional-", dir=runner) if sys.platform == "win32" and not explicit and runner.drive.casefold() != system.drive.casefold() else ""
+          record = dict(system_temp=str(system), runner_temp=str(runner), fresh_fixture_parent=base, existing_explicit_basetemp=explicit, scope="new functional pytest directories only; no global environment or performance-leg change")
+          (runner / "interop-fixture-storage.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write("base=" + base.replace("\\", "/") + "\n")
+          print("CI_FIXTURE_STORAGE: " + json.dumps(record))
+          PY
       - name: Check registered JSON HTTP, TLS and MCP boundaries
         run: |
           uv run --frozen ruff check src/octop/infra/connectors/{fixed_json,tool_protocol,registered_model}.py tests/unit/connectors/test_{fixed_json,registered_model}.py
           uv run --frozen ruff format --check src/octop/infra/connectors/{fixed_json,tool_protocol,registered_model}.py tests/unit/connectors/test_{fixed_json,registered_model}.py
           uv run --frozen mypy --strict src/octop/infra/connectors/{fixed_json,tool_protocol,registered_model}.py
-          uv run --frozen pytest tests/unit/connectors/test_fixed_json.py tests/unit/connectors/test_registered_model.py -q --junitxml "$RUNNER_TEMP/fixed-json.xml"
+          fixture_args=()
+          if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-1")
+          fi
+          uv run --frozen pytest tests/unit/connectors/test_fixed_json.py tests/unit/connectors/test_registered_model.py -q --junitxml "$RUNNER_TEMP/fixed-json.xml" "${fixture_args[@]}"
         if: ${{ matrix.suite == 'interop' }}
         env:
           CI_VALIDATOR_REGRESSIONS: ${{ needs.ci-scope.outputs.validator_regressions }}
@@ -241,6 +268,10 @@ jobs:
           shared_workers=()
           if [ "$RUNNER_OS" = Linux ]; then shared_workers=(-n 2); fi
           echo "CI_SHARED_WORKERS: runtime_os=$RUNNER_OS worker_args=${shared_workers[*]:-serial}"
+          fixture_args=()
+          if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-2")
+          fi
           uv run --frozen pytest \
             tests/unit/connectors/test_qcc_grant.py \
             tests/unit/connectors/test_qcc_oauth_grant.py \
@@ -251,15 +282,23 @@ jobs:
             tests/unit/market \
             tests/integration/test_local_expert_market.py \
             tests/integration/test_local_skill_market.py \
-            "${shared_workers[@]}" -q --junitxml "$RUNNER_TEMP/shared-market.xml"
+            "${shared_workers[@]}" -q --junitxml "$RUNNER_TEMP/shared-market.xml" "${fixture_args[@]}"
         if: ${{ matrix.suite == 'interop' }}
         env:
           CI_VALIDATOR_REGRESSIONS: ${{ needs.ci-scope.outputs.validator_regressions }}
         shell: bash
       - name: Check isolated dependencies and live worker fixtures
         run: |
-          uv run --frozen pytest tests/unit/api/test_knowledge_bases.py tests/unit/company_runtime/test_desktop_capacity.py tests/unit/company_runtime/test_local_process.py tests/unit/company_runtime/test_supervised_process_leaf.py tests/unit/infra/test_harness_config_imports.py -q --junitxml "$RUNNER_TEMP/shared-fixtures.xml"
-          uv run --frozen pytest tests/unit/db/test_execution.py -q
+          fixture_args=()
+          if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-3")
+          fi
+          uv run --frozen pytest tests/unit/api/test_knowledge_bases.py tests/unit/company_runtime/test_desktop_capacity.py tests/unit/company_runtime/test_local_process.py tests/unit/company_runtime/test_supervised_process_leaf.py tests/unit/infra/test_harness_config_imports.py -q --junitxml "$RUNNER_TEMP/shared-fixtures.xml" "${fixture_args[@]}"
+          fixture_args=()
+          if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-4")
+          fi
+          uv run --frozen pytest tests/unit/db/test_execution.py -q "${fixture_args[@]}"
         if: ${{ matrix.suite == 'interop' }}
         env:
           CI_VALIDATOR_REGRESSIONS: ${{ needs.ci-scope.outputs.validator_regressions }}
@@ -332,11 +371,23 @@ jobs:
             # These validators use private Git, Make and pytest fixture roots.
             validator_workers=(-n 2)
           fi
-          uv run --frozen pytest "${connector_tests[@]}" "${validator_workers[@]}" -q
-          if [ "$RUNNER_OS" != Linux ] && [ "${CI_VALIDATOR_REGRESSIONS:-true}" = false ]; then
-            uv run --frozen pytest tests/unit/deployment/test_make_testmon.py::test_full_make_records_real_baseline_and_preserves_failure -q
+          fixture_args=()
+          if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-5")
           fi
-          uv run --frozen pytest tests/integration/test_connectors_api.py -q -k 'patch_custom_mcp_server_default_open_only or shared_custom_mcp_is_visible_with_collision_safe_name or chat_rejects_unknown_mcp or chat_accepts_user_instance_mcp'
+          uv run --frozen pytest "${connector_tests[@]}" "${validator_workers[@]}" -q "${fixture_args[@]}"
+          if [ "$RUNNER_OS" != Linux ] && [ "${CI_VALIDATOR_REGRESSIONS:-true}" = false ]; then
+            fixture_args=()
+            if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+              fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-6")
+            fi
+            uv run --frozen pytest tests/unit/deployment/test_make_testmon.py::test_full_make_records_real_baseline_and_preserves_failure -q "${fixture_args[@]}"
+          fi
+          fixture_args=()
+          if [[ -n "${{ steps.interop_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-7")
+          fi
+          uv run --frozen pytest tests/integration/test_connectors_api.py -q -k 'patch_custom_mcp_server_default_open_only or shared_custom_mcp_is_visible_with_collision_safe_name or chat_rejects_unknown_mcp or chat_accepts_user_instance_mcp' "${fixture_args[@]}"
           uv run --frozen python tools/export_public_source.py --output "$RUNNER_TEMP/sudograph-public-source"
           uv run --frozen python tools/check_public_source.py --root "$RUNNER_TEMP/sudograph-public-source"
         if: ${{ matrix.suite == 'interop' }}
@@ -361,6 +412,7 @@ jobs:
         with:
           name: sudograph-interop-receipts-${{ runner.os }}
           path: |
+            ${{ runner.temp }}/interop-fixture-storage.json
             ${{ runner.temp }}/sudograph-acceptance/receipt.json
             ${{ runner.temp }}/sudograph-acceptance/checks.json
             ${{ runner.temp }}/sudograph-acceptance/incomplete.json

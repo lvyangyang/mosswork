@@ -236,8 +236,35 @@ jobs:
           uv run --frozen ruff check src tests packages/moss-gateway/src/moss_gateway/channels/feishu.py
           uv run --frozen ruff format --check src tests packages/moss-gateway/src/moss_gateway/channels/feishu.py
           uv run --frozen mypy src/octop
+      - name: Select fresh Windows functional fixture storage
+        id: functional_fixture_storage
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import sys
+          import tempfile
+          import shlex
+          system = Path(tempfile.gettempdir()).resolve()
+          runner = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+          assert runner.is_dir() and "\n" not in str(runner) and "\r" not in str(runner)
+          explicit = any(arg == "--basetemp" or arg.startswith("--basetemp=") for arg in shlex.split(os.environ.get("PYTEST_ADDOPTS", "")))
+          base = tempfile.mkdtemp(prefix="mosswork-functional-", dir=runner) if sys.platform == "win32" and not explicit and runner.drive.casefold() != system.drive.casefold() else ""
+          record = dict(system_temp=str(system), runner_temp=str(runner), fresh_fixture_parent=base, existing_explicit_basetemp=explicit, scope="new functional pytest directories only; no global environment or performance-leg change")
+          (runner / "functional-fixture-storage.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write("base=" + base.replace("\\", "/") + "\n")
+          print("CI_FIXTURE_STORAGE: " + json.dumps(record))
+          PY
       - name: Verify current membership, revocation and original IM identity
         run: |
+          fixture_args=()
+          if [[ -n "${{ steps.functional_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.functional_fixture_storage.outputs.base }}/cohort-1")
+          fi
           uv run --frozen pytest -n "${{ runner.os == 'Windows' && '0' || '2' }}" \
             tests/unit/agents/test_personal_moss_identity.py \
             tests/unit/agents/test_personal_moss_access.py \
@@ -262,18 +289,30 @@ jobs:
             tests/unit/gateway/test_feishu_current_dispatch_assertion.py \
             tests/unit/db/test_canonical_identity_projection.py \
             tests/unit/i18n \
-            -m 'not integration and not live' -q --junitxml=identity-results.xml
+            -m 'not integration and not live' -q --junitxml=identity-results.xml "${fixture_args[@]}"
+          fixture_args=()
+          if [[ -n "${{ steps.functional_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.functional_fixture_storage.outputs.base }}/cohort-2")
+          fi
           uv run --frozen pytest -n 0 \
             tests/unit/company_runtime/test_local_process.py \
             tests/unit/infra/test_harness_config_imports.py \
             tests/unit/company_runtime/test_desktop_capacity.py \
-            -m 'not integration and not live' -q --junitxml=identity-startup-results.xml
+            -m 'not integration and not live' -q --junitxml=identity-startup-results.xml "${fixture_args[@]}"
+          fixture_args=()
+          if [[ -n "${{ steps.functional_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.functional_fixture_storage.outputs.base }}/cohort-3")
+          fi
           uv run --frozen pytest packages/moss-gateway/tests/channels/test_feishu.py \
-            -m 'not integration and not live' -q --junitxml=gateway-feishu-results.xml
+            -m 'not integration and not live' -q --junitxml=gateway-feishu-results.xml "${fixture_args[@]}"
       - name: Verify knowledge adapter dependency isolation
         run: |
+          fixture_args=()
+          if [[ -n "${{ steps.functional_fixture_storage.outputs.base }}" ]]; then
+            fixture_args=(--basetemp "${{ steps.functional_fixture_storage.outputs.base }}/cohort-4")
+          fi
           uv run --frozen pytest tests/unit/api/test_knowledge_bases.py \
-            -m 'not integration and not live' -q --junitxml=knowledge-adapter-results.xml
+            -m 'not integration and not live' -q --junitxml=knowledge-adapter-results.xml "${fixture_args[@]}"
       - uses: actions/setup-node@v4
         if: runner.os == 'Linux'
         with:
@@ -323,4 +362,5 @@ jobs:
             identity-startup-results.xml
             gateway-feishu-results.xml
             knowledge-adapter-results.xml
+            ${{ runner.temp }}/functional-fixture-storage.json
           if-no-files-found: ignore

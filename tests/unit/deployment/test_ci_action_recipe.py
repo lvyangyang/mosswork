@@ -2,7 +2,10 @@
 
 import hashlib
 import json
+import os
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -92,7 +95,7 @@ def test_browser_matrices_stop_siblings_after_first_failure() -> None:
 
 def _pytest_commands(body: str) -> list[list[str]]:
     return [
-        shlex.split(line.strip())
+        [arg for arg in shlex.split(line.strip()) if arg != "${fixture_args[@]}"]
         for line in body.replace("\\\n", " ").splitlines()
         if line.strip().startswith("uv run --frozen pytest ")
     ]
@@ -166,4 +169,168 @@ def test_identity_ci_keeps_original_paths_markers_and_serial_startup_boundaries(
     assert any(
         "identity-results.xml" in paths and "identity-startup-results.xml" in paths
         for paths in uploads
+    )
+
+
+def _functional_storage_program(
+    steps: list[dict], identifier: str = "functional_fixture_storage"
+) -> str:
+    (setup,) = [step for step in steps if step.get("id") == identifier]
+    condition = "runner.os == 'Windows'" + (
+        " && matrix.suite == 'interop'" if identifier == "interop_fixture_storage" else ""
+    )
+    assert setup["if"] == condition and setup["shell"] == "bash"
+    return setup["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+
+def test_windows_functional_storage_program_is_shared_and_every_cohort_is_separate() -> None:
+    root = Path(__file__).resolve().parents[3]
+    action = yaml.safe_load(
+        (root / ".github/actions/canonical-product-checks/action.yml").read_text("utf-8")
+    )
+    identity = yaml.safe_load(
+        (root / ".github/workflows/mosswork-identity-ci.yml").read_text("utf-8")
+    )
+    action_steps = action["runs"]["steps"]
+    identity_steps = identity["jobs"]["identity"]["steps"]
+    assert _functional_storage_program(action_steps) == _functional_storage_program(identity_steps)
+    for steps, expected in [(action_steps, 3), (identity_steps, 4)]:
+        scripts = [step.get("run", "") for step in steps]
+        commands = [
+            line.strip()
+            for script in scripts
+            for line in script.replace("\\\n", " ").splitlines()
+            if line.strip().startswith("uv run --frozen pytest ")
+        ]
+        assert len(commands) == expected
+        assert all(line.endswith('"${fixture_args[@]}"') for line in commands)
+        for index in range(1, expected + 1):
+            token = (
+                'fixture_args=(--basetemp "${{ steps.functional_fixture_storage.outputs.base }}/cohort-'
+                + str(index)
+                + '")'
+            )
+            assert sum(script.count(token) for script in scripts) == 1
+        assert sum(script.count("fixture_args=()") for script in scripts) == expected
+        assert (
+            sum(
+                script.count(
+                    'if [[ -n "${{ steps.functional_fixture_storage.outputs.base }}" ]]; then'
+                )
+                for script in scripts
+            )
+            == expected
+        )
+        uploads = [
+            step.get("with", {}).get("path", "")
+            for step in steps
+            if step.get("uses", "").startswith("actions/upload-artifact")
+        ]
+        assert any("functional-fixture-storage.json" in paths for paths in uploads)
+
+
+@pytest.mark.parametrize("scope", ["canonical", "interop"])
+def test_real_storage_selection_keeps_default_and_explicit_parents_intact(
+    tmp_path: Path, scope: str
+) -> None:
+    root = Path(__file__).resolve().parents[3]
+    action = yaml.safe_load(
+        (root / ".github/actions/canonical-product-checks/action.yml").read_text("utf-8")
+    )
+    if scope == "interop":
+        workflow = yaml.safe_load((root / ".github/workflows/mosswork-ci.yml").read_text("utf-8"))
+        program = _functional_storage_program(
+            workflow["jobs"]["release-checks"]["steps"], "interop_fixture_storage"
+        )
+    else:
+        program = _functional_storage_program(action["runs"]["steps"])
+    metadata_name = (
+        "interop-fixture-storage.json" if scope == "interop" else "functional-fixture-storage.json"
+    )
+
+    def run(label: str, *, same_volume: bool = False, explicit: bool = False) -> dict:
+        runner = tmp_path / label
+        runner.mkdir()
+        sentinel = runner / "unrelated-sentinel"
+        sentinel.write_text("retain", "utf-8")
+        output = runner / "github-output"
+        environment = {**os.environ, "RUNNER_TEMP": str(runner), "GITHUB_OUTPUT": str(output)}
+        environment.pop("PYTEST_ADDOPTS", None)
+        if same_volume:
+            system = runner / "system-temp"
+            system.mkdir()
+            environment.update(TEMP=str(system), TMP=str(system), TMPDIR=str(system))
+        if explicit:
+            environment["PYTEST_ADDOPTS"] = '--basetemp="original explicit selection" -q'
+        result = subprocess.run(
+            [sys.executable, "-c", program], env=environment, capture_output=True, timeout=30
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        record = json.loads((runner / metadata_name).read_text("utf-8"))
+        selected = record["fresh_fixture_parent"]
+        assert output.read_text("utf-8") == "base=" + selected.replace("\\", "/") + "\n"
+        expected = (
+            sys.platform == "win32"
+            and not explicit
+            and Path(record["runner_temp"]).drive.casefold()
+            != Path(record["system_temp"]).drive.casefold()
+        )
+        assert bool(selected) == expected
+        if selected:
+            directory = Path(selected)
+            assert directory.parent == runner.resolve() and directory != runner.resolve()
+            assert directory.is_dir() and list(directory.iterdir()) == []
+            assert directory.name.startswith("mosswork-functional-")
+        assert sentinel.read_text("utf-8") == "retain"
+        assert record["existing_explicit_basetemp"] is explicit
+        return record
+
+    first, second = run("first"), run("second")
+    if first["fresh_fixture_parent"]:
+        assert first["fresh_fixture_parent"] != second["fresh_fixture_parent"]
+    assert run("same", same_volume=True)["fresh_fixture_parent"] == ""
+    assert run("explicit", explicit=True)["fresh_fixture_parent"] == ""
+
+
+def test_interop_storage_only_covers_original_functional_cohorts() -> None:
+    root = Path(__file__).resolve().parents[3]
+    core = yaml.safe_load((root / ".github/workflows/mosswork-ci.yml").read_text("utf-8"))
+    action = yaml.safe_load(
+        (root / ".github/actions/canonical-product-checks/action.yml").read_text("utf-8")
+    )
+    steps = core["jobs"]["release-checks"]["steps"]
+    interop = _functional_storage_program(steps, "interop_fixture_storage")
+    assert interop.replace(
+        "interop-fixture-storage.json", "functional-fixture-storage.json"
+    ) == _functional_storage_program(action["runs"]["steps"])
+    selected = {
+        "Check registered JSON HTTP, TLS and MCP boundaries",
+        "Check shared fixture, cold CLI and offline catalog isolation",
+        "Check isolated dependencies and live worker fixtures",
+        "Check connector regressions and portable source exports",
+    }
+    count = 0
+    for step in steps:
+        body = step.get("run", "")
+        if step.get("name") not in selected:
+            assert '"${fixture_args[@]}"' not in body
+            continue
+        count += body.count('"${fixture_args[@]}"')
+        assert body.count("fixture_args=()") == body.count('"${fixture_args[@]}"')
+    assert count == 7
+    for index in range(1, 8):
+        token = (
+            'fixture_args=(--basetemp "${{ steps.interop_fixture_storage.outputs.base }}/cohort-'
+            + str(index)
+            + '")'
+        )
+        assert sum(step.get("run", "").count(token) for step in steps) == 1
+    (domain,) = [
+        step
+        for step in steps
+        if step.get("name") == "Check domain client with the real installed worker"
+    ]
+    assert '--basetemp "$RUNNER_TEMP/sudograph-domain-client"' in domain["run"]
+    assert any(
+        "interop-fixture-storage.json" in step.get("with", {}).get("path", "") for step in steps
     )
