@@ -238,7 +238,7 @@ jobs:
           uv run --frozen mypy src/octop
       - name: Verify current membership, revocation and original IM identity
         run: |
-          uv run --frozen pytest -n 2 \
+          uv run --frozen pytest -n "${{ runner.os == 'Windows' && '0' || '2' }}" \
             tests/unit/agents/test_personal_moss_identity.py \
             tests/unit/agents/test_personal_moss_access.py \
             tests/unit/identity \

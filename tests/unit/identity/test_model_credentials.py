@@ -52,7 +52,9 @@ def _self_token(case: dict[str, Any]) -> str:
 def _load(path: Path, case: dict[str, Any]) -> None:
     """Install test-only exact DDL/rows emitted by the original TS writers."""
     with sqlite3.connect(path) as connection:
-        connection.executescript(_ORACLE["ddl"]["billing"] + ";" + _ORACLE["ddl"]["organization"])
+        connection.executescript(
+            "BEGIN;" + _ORACLE["ddl"]["billing"] + ";" + _ORACLE["ddl"]["organization"]
+        )
         for table in (
             "billing_external_accounts",
             "organization_model_accounts",
