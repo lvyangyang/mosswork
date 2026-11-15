@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import importlib.metadata
+import io
 import json
 import os
 import re
@@ -320,6 +322,56 @@ def inputs(root: Path) -> dict[str, str]:
     return result
 
 
+def installed_packages() -> list[tuple[str, str, str | None]]:
+    """Check declared payload presence/size, not full content hashes or optional bytecode."""
+    packages: list[tuple[str, str, str | None]] = []
+    directories: dict[str, dict[str, os.DirEntry[str]]] = {}
+    damaged: list[tuple[str, str, str]] = []
+    for distribution in importlib.metadata.distributions():
+        name, version = distribution.metadata["Name"], distribution.version
+        record = distribution.read_text("RECORD")
+        if record is None:
+            # RECORD is optional for non-wheel installers; retain that distinction.
+            packages.append((name, version, None))
+            continue
+        declarations = []
+        try:
+            for row in csv.reader(io.StringIO(record), strict=True):
+                if len(row) != 3:
+                    raise ValueError("expected three RECORD columns")
+                if not row[1]:
+                    continue
+                expected_size = int(row[2]) if row[2] else None
+                declarations.append(row)
+                path = os.path.abspath(str(distribution.locate_file(row[0])))
+                parent, leaf = os.path.split(path)
+                if parent not in directories:
+                    try:
+                        with os.scandir(parent) as entries:
+                            directories[parent] = {
+                                os.path.normcase(entry.name): entry for entry in entries
+                            }
+                    except FileNotFoundError:
+                        directories[parent] = {}
+                entry = directories[parent].get(os.path.normcase(leaf))
+                if entry is None or not entry.is_file():
+                    damaged.append((name, row[0], "missing or not a file"))
+                elif expected_size is not None and entry.stat().st_size != expected_size:
+                    damaged.append((name, row[0], "size mismatch"))
+        except (csv.Error, ValueError) as error:
+            raise ValueError(f"Invalid installed RECORD for {name}: {error}") from error
+        packages.append((name, version, digest(sorted(declarations))))
+    if damaged:
+        raise ValueError(
+            f"Installed package payload incomplete ({len(damaged)} declared files): "
+            + json.dumps(damaged[:12], ensure_ascii=True)
+            + ". Restore this project environment with uv sync --locked --reinstall, "
+            "then rerun the original gate. No reusable result accepted. "
+            "This checks declared file presence/size, not full content hashes."
+        )
+    return sorted(packages, key=lambda item: (item[0], item[1], item[2] or ""))
+
+
 def environment(workers: str) -> str:
     values = {k: v for k, v in os.environ.items() if k not in VOLATILE_ENV}
     return digest(
@@ -329,9 +381,7 @@ def environment(workers: str) -> str:
             "python": sys.version,
             "executable": str(Path(sys.executable).resolve()),
             "platform": sys.platform,
-            "packages": sorted(
-                (d.metadata["Name"], d.version) for d in importlib.metadata.distributions()
-            ),
+            "packages": installed_packages(),
             "pytest_options": _pytest_options(Path.cwd())[1],
         }
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import base64
 import hashlib
 import json
 import os
@@ -164,6 +165,100 @@ def test_real_failure_and_collection_only_cannot_replace_a_passed_baseline(
     )
     assert attempted.returncode != 0 and "TEST_GATE_REFUSED" in attempted.stderr
     assert not plan and not calls and baseline.read_bytes() == before
+
+
+@pytest.fixture
+def installed_gate_repo(
+    gate_repo: tuple[Path, dict[str, str]],
+) -> tuple[Path, dict[str, str], Path, Path, Path]:
+    root, env = gate_repo
+    site = root / "output/installed-fixture"
+    package = site / "gate_payload_fixture"
+    metadata = site / "gate_payload_fixture-1.0.dist-info"
+    package.mkdir(parents=True)
+    metadata.mkdir()
+    marker = package / "py.typed"
+    module = package / "__init__.py"
+    marker.write_bytes(b"")
+    module.write_bytes(b"VALUE = 1\n")
+    (metadata / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: gate-payload-fixture\nVersion: 1.0\n", encoding="utf-8"
+    )
+    record = metadata / "RECORD"
+    record.write_text(
+        "".join(
+            f"gate_payload_fixture/{file.name},sha256="
+            + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("=")
+            + f",{len(data)}\n"
+            for file, data in ((marker, b""), (module, b"VALUE = 1\n"))
+        )
+        + "gate_payload_fixture/__pycache__/optional.pyc,,\n"
+        "gate_payload_fixture-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    env = {**env, "PYTHONPATH": str(site) + os.pathsep + env.get("PYTHONPATH", "")}
+    return root, env, marker, module, metadata
+
+
+@pytest.mark.parametrize("damage", ["missing", "truncated"])
+def test_damaged_installed_files_refuse_before_pytest_without_losing_real_history(
+    installed_gate_repo: tuple[Path, dict[str, str], Path, Path, Path], damage: str
+) -> None:
+    root, env, marker, module, metadata = installed_gate_repo
+    record = metadata / "RECORD"
+    first, plan, calls = execute(root, env, "intact")
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert plan["mode"] == "full" and sorted(calls) == ["first", "second"]
+    storage = root / ".git/mosswork-test-gate"
+    original_history = {
+        name: (storage / name).read_bytes() for name in ("baseline.json", "history.json")
+    }
+    original_metadata = (metadata / "METADATA").read_bytes(), record.read_bytes()
+    if damage == "missing":
+        marker.unlink()
+    else:
+        module.write_bytes(b"VALUE =")
+    refused, plan, calls = execute(root, env, damage, "--require-reuse")
+    assert refused.returncode != 0 and "TEST_GATE_REFUSED" in refused.stderr
+    assert "gate-payload-fixture" in refused.stderr
+    assert "uv sync --locked --reinstall" in refused.stderr
+    assert not plan and not calls
+    full, plan, calls = execute(root, env, damage + "-full", "--full")
+    assert full.returncode != 0 and "Installed package payload incomplete" in full.stderr
+    assert not plan and not calls
+    assert not (storage / "incomplete.json").exists()
+    assert {name: (storage / name).read_bytes() for name in original_history} == original_history
+    assert ((metadata / "METADATA").read_bytes(), record.read_bytes()) == original_metadata
+    marker.write_bytes(b"")
+    module.write_bytes(b"VALUE = 1\n")
+    repaired, plan, calls = execute(root, env, "repaired", "--require-reuse")
+    assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+    assert plan["mode"] == "affected" and calls == []
+
+
+def test_installed_payload_damage_during_pytest_cannot_update_real_history(
+    installed_gate_repo: tuple[Path, dict[str, str], Path, Path, Path],
+) -> None:
+    root, env, marker, _, _ = installed_gate_repo
+    initial, plan, _ = execute(root, env, "initial")
+    assert initial.returncode == 0, initial.stdout + initial.stderr
+    storage = root / ".git/mosswork-test-gate"
+    original_history = {
+        name: (storage / name).read_bytes() for name in ("baseline.json", "history.json")
+    }
+    first = root / "tests/test_first.py"
+    first.write_text(
+        first.read_text(encoding="utf-8")
+        + f"    Path({marker.relative_to(root).as_posix()!r}).unlink()\n",
+        encoding="utf-8",
+    )
+    result, plan, calls = execute(root, env, "payload-drift")
+    assert result.returncode != 0 and "Installed package payload incomplete" in result.stderr
+    assert plan["mode"] == "affected" and calls == ["first"]
+    receipt = json.loads(Path(plan["receipt"]).read_text(encoding="utf-8"))
+    assert receipt["exit_code"] == 0 and not receipt["passed"]
+    assert not marker.exists()
+    assert {name: (storage / name).read_bytes() for name in original_history} == original_history
 
 
 def test_source_drift_rejects_an_otherwise_successful_real_pytest_run(
