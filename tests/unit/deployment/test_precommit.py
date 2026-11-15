@@ -971,9 +971,11 @@ def seed_windows_validation_workflow(repo: Path) -> None:
     ci_commit(repo, "qualified Windows workflow fixture")
 
 
-@pytest.mark.parametrize(
-    "path,run_runtime",
-    [
+def test_real_committed_ci_scope_defaults_to_both_runtime_matrices(repo: Path) -> None:
+    original = git(repo, "rev-parse", "HEAD")
+    seed_windows_validation_workflow(repo)
+    qualified = git(repo, "rev-parse", "HEAD")
+    scenarios = [
         ("Makefile", False),
         ("AGENTS.md", False),
         ("CONTRIBUTING.md", False),
@@ -995,19 +997,17 @@ def seed_windows_validation_workflow(repo: Path) -> None:
         ("tests/unit/deployment/new_test.py", True),
         ("docs/new.md", True),
         ("unknown-input.json", True),
-    ],
-)
-def test_real_committed_ci_scope_defaults_to_both_runtime_matrices(
-    repo: Path, path: str, run_runtime: bool
-) -> None:
-    if path in gate.WINDOWS_VALIDATION_INPUTS:
-        seed_windows_validation_workflow(repo)
-    base = git(repo, "rev-parse", "HEAD")
-    stage(repo, path)
-    ci_commit(repo, "candidate")
-    plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
-    assert plan["runtime_matrix"] is run_runtime
-    assert plan["paths"] == [path]
+    ]
+    for index, (path, run_runtime) in enumerate(scenarios):
+        # Each candidate has the same original parent, without another Git init.
+        parent = qualified if path in gate.WINDOWS_VALIDATION_INPUTS else original
+        git(repo, "switch", "--quiet", "-c", f"scope-case-{index}", parent)
+        base = git(repo, "rev-parse", "HEAD")
+        stage(repo, path)
+        ci_commit(repo, "candidate")
+        plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
+        assert plan["runtime_matrix"] is run_runtime, path
+        assert plan["paths"] == [path], path
 
 
 @pytest.mark.parametrize("operation", ["rename", "delete", "mixed"])
@@ -1188,24 +1188,32 @@ def test_ci_scope_cli_uses_commits_without_inheriting_or_mutating_an_index(
     assert (repo / ".git/index").read_bytes() == index_before
 
 
-@pytest.mark.parametrize("path", sorted(gate.WINDOWS_VALIDATION_INPUTS))
-def test_committed_validation_tools_keep_windows_checks_without_runtime_jobs(
-    repo: Path, path: str
-) -> None:
+def test_committed_validation_tools_keep_windows_checks_without_runtime_jobs(repo: Path) -> None:
     seed_windows_validation_workflow(repo)
-    base = git(repo, "rev-parse", "HEAD")
-    stage(repo, path)
-    stage(repo, "CONTRIBUTING.md")
-    ci_commit(repo, "independent tool candidate")
-    plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
-    assert plan["runtime_matrix"] is False
-    assert plan["windows_validation"] is True
-    assert set(plan["paths"]) == {path, "CONTRIBUTING.md"}
+    parent = git(repo, "rev-parse", "HEAD")
+    for index, path in enumerate(sorted(gate.WINDOWS_VALIDATION_INPUTS)):
+        git(repo, "switch", "--quiet", "-c", f"tool-case-{index}", parent)
+        base = git(repo, "rev-parse", "HEAD")
+        stage(repo, path)
+        stage(repo, "CONTRIBUTING.md")
+        ci_commit(repo, "independent tool candidate")
+        plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
+        assert plan["runtime_matrix"] is False, path
+        assert plan["windows_validation"] is True, path
+        assert set(plan["paths"]) == {path, "CONTRIBUTING.md"}, path
 
 
-@pytest.mark.parametrize(
-    "workflow",
-    [
+def test_windows_tool_scope_keeps_runtime_jobs_for_unqualified_workflow(repo: Path) -> None:
+    seed_windows_validation_workflow(repo)
+    parent = git(repo, "rev-parse", "HEAD")
+    stage(repo, "tools/check_public_source.py")
+    ci_commit(repo, "qualified positive control")
+    positive = gate.ci_plan(repo, parent, git(repo, "rev-parse", "HEAD"))
+    assert positive["runtime_matrix"] is False
+    assert positive["windows_validation"] is True
+    path = ".github/workflows/mosswork-ci.yml"
+    source = (SOURCE / path).read_text(encoding="utf-8")
+    scenarios = [
         "missing",
         "changed",
         "output-commented",
@@ -1214,51 +1222,52 @@ def test_committed_validation_tools_keep_windows_checks_without_runtime_jobs(
         "linux-selection",
         "linux-tool-selection",
         "linux-history",
-    ],
-)
-def test_windows_tool_scope_keeps_runtime_jobs_for_unqualified_workflow(
-    repo: Path, workflow: str
-) -> None:
-    if workflow != "missing":
-        path = ".github/workflows/mosswork-ci.yml"
-        source = (SOURCE / path).read_text(encoding="utf-8")
-        old, new = {
-            "changed": (
-                "    timeout-minutes: ${{ matrix.timeout_minutes }}\n",
-                "    timeout-minutes: 11\n",
-            ),
-            "output-commented": (
-                "      windows_validation: ${{ steps.scope.outputs.windows_validation }}",
-                "#       windows_validation: ${{ steps.scope.outputs.windows_validation }}",
-            ),
-            "planner-changed": ("id: scope", "id: other-selector"),
-            "linux-command": (
-                "      - name: Check independent validation tools and the complete current source",
-                "      - name: Removed independent tool check",
-            ),
-            "linux-tool-selection": (
-                "        if: ${{ matrix.suite == 'release' && (needs.ci-scope.outputs.windows_validation == 'true') }}\n",
-                "        if: false\n",
-            ),
-            "linux-history": (
-                "    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 2\n      - uses: astral-sh/setup-uv@v6",
-                "    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 1\n      - uses: astral-sh/setup-uv@v6",
-            ),
-            "linux-selection": (
-                "    needs: ci-scope\n    strategy:\n",
-                "    needs: other-selector\n    strategy:\n",
-            ),
-        }[workflow]
-        assert old in source
-        stage(repo, path, source.replace(old, new))
-        ci_commit(repo, "different Windows workflow fixture")
-    base = git(repo, "rev-parse", "HEAD")
-    stage(repo, "tools/check_public_source.py")
-    ci_commit(repo, "tool-only candidate")
-    plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
-    assert plan["runtime_matrix"] is True
-    assert plan["windows_validation"] is False
-    assert "recipe" in plan["reason"]
+    ]
+    for index, workflow in enumerate(scenarios):
+        # Keep the actual companion action present so each workflow defect matters.
+        git(repo, "switch", "--quiet", "-c", f"recipe-case-{index}", parent)
+        if workflow != "missing":
+            old, new = {
+                "changed": (
+                    "    timeout-minutes: ${{ matrix.timeout_minutes }}\n",
+                    "    timeout-minutes: 11\n",
+                ),
+                "output-commented": (
+                    "      windows_validation: ${{ steps.scope.outputs.windows_validation }}",
+                    "#       windows_validation: ${{ steps.scope.outputs.windows_validation }}",
+                ),
+                "planner-changed": ("id: scope", "id: other-selector"),
+                "linux-command": (
+                    "      - name: Check independent validation tools and the complete current source",
+                    "      - name: Removed independent tool check",
+                ),
+                "linux-tool-selection": (
+                    "        if: ${{ matrix.suite == 'release' && (needs.ci-scope.outputs.windows_validation == 'true') }}\n",
+                    "        if: false\n",
+                ),
+                "linux-history": (
+                    "    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 2\n      - uses: astral-sh/setup-uv@v6",
+                    "    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 1\n      - uses: astral-sh/setup-uv@v6",
+                ),
+                "linux-selection": (
+                    "    needs: ci-scope\n    strategy:\n",
+                    "    needs: other-selector\n    strategy:\n",
+                ),
+            }[workflow]
+            assert old in source
+            stage(repo, path, source.replace(old, new))
+            ci_commit(repo, "different Windows workflow fixture")
+        else:
+            git(repo, "rm", path)
+            ci_commit(repo, "missing Windows workflow fixture")
+        base = git(repo, "rev-parse", "HEAD")
+        stage(repo, "tools/check_public_source.py")
+        ci_commit(repo, "tool-only candidate")
+        plan = gate.ci_plan(repo, base, git(repo, "rev-parse", "HEAD"))
+        assert plan["paths"] == ["tools/check_public_source.py"], workflow
+        assert plan["runtime_matrix"] is True, workflow
+        assert plan["windows_validation"] is False, workflow
+        assert "recipe" in plan["reason"], workflow
 
 
 @pytest.mark.parametrize("operation", ["delete", "rename", "runtime", "execution-helper", "worker"])
