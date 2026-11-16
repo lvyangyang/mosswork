@@ -444,6 +444,7 @@ export default function MessageList(props: MessageListProps) {
   virtualItemCountRef.current = messageGroups.length;
   const firstItemIndexRef = useRef(firstItemIndex);
   firstItemIndexRef.current = firstItemIndex;
+  const isVirtualAtTop = useCallback(() => atTopRef.current, []);
 
   const virtualScrollConfig = useMemo(
     () =>
@@ -481,6 +482,7 @@ export default function MessageList(props: MessageListProps) {
     scrollToBottom,
     armProgrammaticGuard,
     handleAtBottomChange,
+    handleContentHeightChange,
   } = useAutoScroll({
     containerRef,
     endRef,
@@ -489,7 +491,7 @@ export default function MessageList(props: MessageListProps) {
     onNearTop: requestOlderMessages,
     // Virtuoso + firstItemIndex: at-top is not scrollTop≈0. Non-virtual omits
     // this so scrollTop near 0 still counts.
-    ...(useVirtual ? { isAtTop: () => atTopRef.current } : {}),
+    ...(useVirtual ? { isAtTop: isVirtualAtTop } : {}),
     onOverscrollBottom: requestRefreshMessages,
     deps: [scrollFollowToken],
     skipNextDepsScrollRef,
@@ -833,6 +835,13 @@ export default function MessageList(props: MessageListProps) {
       setScrollerMountKey((k) => k + 1);
     }
   }, []);
+  const bindVirtualScroller = useCallback((el: HTMLElement | Window | null) => {
+    const next = el instanceof HTMLElement ? el : null;
+    if (next !== scrollerRef.current) {
+      scrollerRef.current = next;
+      if (next) setScrollerMountKey((k) => k + 1);
+    }
+  }, []);
 
   if (loading && messages.length === 0) {
     return (
@@ -876,16 +885,11 @@ export default function MessageList(props: MessageListProps) {
           increaseViewportBy={{ top: 600, bottom: 800 }}
           followOutput={false}
           atBottomStateChange={handleAtBottomChange}
+          totalListHeightChanged={handleContentHeightChange}
           atTopStateChange={handleAtTopStateChange}
           atTopThreshold={200}
           startReached={requestOlderMessages}
-          scrollerRef={(el) => {
-            const next = el instanceof HTMLElement ? el : null;
-            if (next !== scrollerRef.current) {
-              scrollerRef.current = next;
-              if (next) setScrollerMountKey((k) => k + 1);
-            }
-          }}
+          scrollerRef={bindVirtualScroller}
           components={virtuosoComponents}
           itemContent={(index, group) =>
             renderMessageGroup(group, index - firstItemIndex, groupContext)

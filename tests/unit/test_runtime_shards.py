@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -137,10 +138,30 @@ def test_other_shard_queue_cannot_hide_eligible_work(shards):
 
 
 @pytest.mark.asyncio
-async def test_independent_workers_share_global_capacity_and_never_duplicate(shards):
+async def test_independent_workers_share_global_capacity_and_never_duplicate(shards, monkeypatch):
     _, repo, users = shards
     release, both = asyncio.Event(), asyncio.Event()
     seen = []
+    repo.configure(running=2, queued=16, user_queued=8)
+    queued = threading.Event()
+    attempted = asyncio.Event()
+    attempted_nodes = set()
+    loop = asyncio.get_running_loop()
+    claim = repo.claim
+
+    def record_attempt(node):
+        attempted_nodes.add(node)
+        if attempted_nodes == {"worker", "worker2"}:
+            attempted.set()
+
+    def observe_claim(node, incarnation, **options):
+        is_queued = queued.is_set()
+        run = claim(node, incarnation, **options)
+        if is_queued:
+            loop.call_soon_threadsafe(record_attempt, node)
+        return run
+
+    monkeypatch.setattr(repo, "claim", observe_claim)
 
     async def handler(run, decision):
         seen.append((run["run_id"], run["node_id"]))
@@ -155,12 +176,24 @@ async def test_independent_workers_share_global_capacity_and_never_duplicate(sha
     ]
     for service in workers:
         service.handler = handler
-    for user in users:
+    # Start one task per actual owner before offering either worker more work.
+    # A shared capacity limit does not promise equal worker startup scheduling.
+    first_users = [
+        next(user for user in users if repo.worker_for(user) == worker.node) for worker in workers
+    ]
+    for user in first_users:
         submit(repo, user)
     try:
         await asyncio.gather(*(worker.start() for worker in workers))
         await asyncio.wait_for(both.wait(), 5)
-        await asyncio.sleep(0.15)
+        for user in users:
+            if user not in first_users:
+                submit(repo, user)
+        queued.set()
+        await asyncio.wait_for(attempted.wait(), 5)
+        assert sorted(
+            repo.by_request(user=user, operation="chat", key=str(user))["state"] for user in users
+        ) == ["queued", "queued", "running", "running"]
         assert len(seen) == 2
         assert {node for _, node in seen} == {"worker", "worker2"}
         release.set()
@@ -171,7 +204,12 @@ async def test_independent_workers_share_global_capacity_and_never_duplicate(sha
             ):
                 break
             await asyncio.sleep(0.05)
+        assert len(seen) == 4
         assert len({run for run, _ in seen}) == 4
+        assert all(
+            repo.by_request(user=user, operation="chat", key=str(user))["state"] == "completed"
+            for user in users
+        )
     finally:
         release.set()
         await asyncio.gather(*(worker.close() for worker in workers))
