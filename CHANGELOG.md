@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Preserve the reading position when dragging the chat scrollbar while a reply is streaming; returning to the latest reply resumes automatic scrolling.
 - Return one-shot agent results after the final task state commits, so the result and conversation availability agree.
 
 ## [0.0.7] - 2026-11-11

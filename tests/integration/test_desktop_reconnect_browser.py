@@ -98,6 +98,7 @@ async def test_built_desktop_chat_reconnect_and_cancel(
     project_binding = {"project_id": "browser-fixture-project", "binding_revision": 1}
     phase = {"mode": "complete"}
     generating, release_generation, syncing, release_sync = (asyncio.Event() for _ in range(4))
+    reading_deltas = asyncio.Queue()
 
     class Model:
         def bind_tools(self, _tools):
@@ -105,6 +106,20 @@ async def test_built_desktop_chat_reconnect_and_cancel(
 
         async def astream(self, messages):
             mode = phase["mode"]
+            if mode.startswith("history-"):
+                yield AIMessageChunk(content=f"Archived reading fixture {mode}.", id=mode)
+                return
+            if mode == "reading":
+                yield AIMessageChunk(
+                    content="\n\n".join(
+                        f"Reading row {index:03}: Keep this paragraph readable while the report grows."
+                        for index in range(120)
+                    ),
+                    id="reading-answer",
+                )
+                while (delta := await reading_deltas.get()) is not None:
+                    yield AIMessageChunk(content="\n\n" + delta, id="reading-answer")
+                return
             if mode == "approval":
                 if not any(
                     isinstance(message, ToolMessage)
@@ -178,7 +193,7 @@ async def test_built_desktop_chat_reconnect_and_cancel(
 
     runtime.emit = publish
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
+        browser = await playwright.chromium.launch(ignore_default_args=["--hide-scrollbars"])
         context = await browser.new_context(
             viewport={"width": 1440, "height": 1000}, locale="en-US"
         )
@@ -249,6 +264,23 @@ async def test_built_desktop_chat_reconnect_and_cancel(
 
         await page.expose_function("acceptanceRuntimeCall", bridge_call)
         await page.add_init_script("""(() => {
+          const bindings = new WeakMap();
+          window.acceptancePointerEvents = [];
+          for (const type of ['pointerdown', 'pointerup', 'pointercancel']) {
+            window.addEventListener(type, e => {
+              const el = document.querySelector('[data-virtuoso-scroller]');
+              window.acceptancePointerEvents.push({type, x:e.clientX, y:e.clientY,
+                target:e.target.tagName, scrollerTarget:e.target === el,
+                top:el?.scrollTop, gap:el && el.scrollHeight - el.scrollTop - el.clientHeight});
+              if (window.acceptancePointerEvents.length > 30) window.acceptancePointerEvents.shift();
+            }, true);
+          }
+          const addListener = EventTarget.prototype.addEventListener;
+          EventTarget.prototype.addEventListener = function(type, ...args) {
+            if (type === 'pointerdown') bindings.set(this, (bindings.get(this) || 0) + 1);
+            return addListener.call(this, type, ...args);
+          };
+          window.acceptanceScrollBindings = bindings;
           const listeners = new Set();
           window.acceptanceEmit = event => { for (const fn of listeners) fn(event); };
           window.__mossworkRuntime = {
@@ -387,6 +419,173 @@ async def test_built_desktop_chat_reconnect_and_cancel(
                     while runtime.work:
                         await asyncio.sleep(0.02)
                 assert not disposable.exists(), "Approved real tool must execute"
+
+            history_turns = 16
+            starts_before_history = calls.count("start")
+            for index in range(history_turns):
+                await expect(stop).to_have_count(0, timeout=20000)
+                phase["mode"] = f"history-{index}"
+                await editor.fill(f"Archive reading history {index}")
+                await editor.press("Enter")
+                await expect(
+                    page.get_by_text(f"Archived reading fixture history-{index}.", exact=True)
+                ).to_be_visible(timeout=30000)
+                async with asyncio.timeout(20):
+                    while runtime.work:
+                        await asyncio.sleep(0.02)
+            await expect(stop).to_have_count(0, timeout=20000)
+            assert calls.count("start") == starts_before_history + history_turns
+
+            phase["mode"] = "reading"
+            starts_before_reading = calls.count("start")
+            await editor.fill("Review the long streaming report")
+            await editor.press("Enter")
+            row = page.get_by_text(
+                "Reading row 119: Keep this paragraph readable while the report grows.", exact=True
+            )
+            await expect(row).to_have_count(1, timeout=30000)
+            scroller = (
+                await row.evaluate_handle("""el => {
+                  for (let node = el.parentElement; node; node = node.parentElement) {
+                    if (getComputedStyle(node).overflowY === 'auto' &&
+                        node.scrollHeight > node.clientHeight * 2) return node;
+                  }
+                  throw new Error('Long report has no scrollable reading surface');
+                }""")
+            ).as_element()
+            assert scroller is not None
+            assert await scroller.get_attribute("data-virtuoso-scroller") == "true"
+            await page.wait_for_function(
+                "el => el.scrollHeight - el.scrollTop - el.clientHeight <= 12", arg=scroller
+            )
+            jump = page.get_by_role("button", name=re.compile(r"^(New replies|有新回复)$"))
+            reading_positions = {}
+
+            def record_positions(label, before, after):
+                reading_positions[label] = {"before": before, "after": after}
+                (evidence / "reading-positions.json").write_text(
+                    json.dumps(reading_positions, indent=2) + "\n"
+                )
+
+            async def position():
+                return await scroller.evaluate("""async el => {
+                  let previous = el.scrollTop, stable = 0;
+                  for (let frame = 0; frame < 120 && stable < 4; frame++) {
+                    await new Promise(requestAnimationFrame);
+                    const current = el.scrollTop;
+                    stable = Math.abs(current - previous) <= 1 ? stable + 1 : 0;
+                    previous = current;
+                  }
+                  return {top: el.scrollTop, height: el.clientHeight, total: el.scrollHeight,
+                    gap: el.scrollHeight - el.scrollTop - el.clientHeight,
+                    gutter: el.offsetWidth - el.clientWidth,
+                    pointer_bindings: window.acceptanceScrollBindings.get(el) || 0};
+                }""")
+
+            initial_geometry = await position()
+            assert initial_geometry["pointer_bindings"] > 0
+
+            async def append_while_reading(label):
+                before = await position()
+                assert before["gap"] > 200, "Fixture must actually be reading earlier text"
+                marker = f"Reading update after {label}."
+                await reading_deltas.put(marker)
+                await expect(page.get_by_text(marker, exact=True)).to_have_count(1)
+                after = await position()
+                record_positions(label, before, after)
+                assert abs(after["top"] - before["top"]) <= 2, (
+                    f"New output moved the user's reading position after {label}: {before} -> {after}"
+                )
+                await expect(jump).to_be_visible()
+
+            await scroller.hover()
+            await page.mouse.wheel(0, -600)
+            await expect(jump).to_be_visible()
+            await append_while_reading("wheel")
+            await page.set_viewport_size({"width": 1440, "height": 760})
+            await append_while_reading("resize")
+            await page.screenshot(path=str(evidence / "reading-free.png"))
+
+            await jump.click()
+            await expect(
+                page.get_by_text("Reading update after resize.", exact=True)
+            ).to_be_in_viewport()
+            await expect(jump).not_to_be_visible()
+            await reading_deltas.put("Reading ready for thumb interaction.")
+            await expect(
+                page.get_by_text("Reading ready for thumb interaction.", exact=True)
+            ).to_be_in_viewport()
+
+            async def press_thumb():
+                await page.wait_for_function(
+                    "el => el.scrollHeight - el.scrollTop - el.clientHeight <= 12", arg=scroller
+                )
+                box = await scroller.bounding_box()
+                geometry = await position()
+                assert box and geometry["gutter"] > 0, "Desktop fixture must expose its scrollbar"
+                scrollbar_x = box["x"] + box["width"] - geometry["gutter"] / 2
+                thumb_height = max(18, geometry["height"] ** 2 / geometry["total"])
+                await page.mouse.move(scrollbar_x, box["y"] + box["height"] - thumb_height / 2)
+                await page.mouse.down()
+                (evidence / "thumb-pointer-events.json").write_text(
+                    json.dumps(await page.evaluate("window.acceptancePointerEvents"), indent=2)
+                    + "\n"
+                )
+                record_positions("pressed", geometry, await position())
+                return box, geometry, scrollbar_x, thumb_height
+
+            # A click without movement must resume follow after its React update.
+            await press_thumb()
+            await expect(jump).to_be_visible()
+            stationary_before = await position()
+            await page.mouse.up()
+            record_positions("stationary", stationary_before, await position())
+            await expect(jump).not_to_be_visible()
+            await reading_deltas.put("Reading after stationary thumb release.")
+            await expect(
+                page.get_by_text("Reading after stationary thumb release.", exact=True)
+            ).to_be_in_viewport()
+
+            # Drag the actual CSS scrollbar to an earlier paragraph in this item.
+            box, geometry, scrollbar_x, thumb_height = await press_thumb()
+            await reading_deltas.put("Reading update while holding the scrollbar.")
+            await expect(
+                page.get_by_text("Reading update while holding the scrollbar.", exact=True)
+            ).to_have_count(1)
+            geometry = await position()
+            target_top = await page.get_by_text(
+                "Reading row 020: Keep this paragraph readable while the report grows.", exact=True
+            ).evaluate(
+                "(el, scroller) => scroller.scrollTop + el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 80",
+                scroller,
+            )
+            fraction = max(0, min(1, target_top / (geometry["total"] - geometry["height"])))
+            await page.mouse.move(
+                scrollbar_x,
+                box["y"] + thumb_height / 2 + fraction * (geometry["height"] - thumb_height),
+                steps=4,
+            )
+            await page.mouse.up()
+            await page.wait_for_function(
+                "el => el.scrollHeight - el.scrollTop - el.clientHeight > 200", arg=scroller
+            )
+            await append_while_reading("scrollbar")
+            await jump.click()
+            await reading_deltas.put("Reading follow resumed.")
+            await expect(page.get_by_text("Reading follow resumed.", exact=True)).to_be_visible()
+            await page.wait_for_function(
+                "el => el.scrollHeight - el.scrollTop - el.clientHeight <= 12", arg=scroller
+            )
+            await reading_deltas.put(None)
+            async with asyncio.timeout(20):
+                while runtime.work:
+                    await asyncio.sleep(0.02)
+            assert calls.count("start") == starts_before_reading + 1
+            final_geometry = await position()
+            assert final_geometry["pointer_bindings"] == initial_geometry["pointer_bindings"], (
+                "Streaming must not rebind the same scroller's pointer listener: "
+                f"{initial_geometry} -> {final_geometry}"
+            )
             assert not page_errors, page_errors
             await page.screenshot(path=str(evidence / "cancelled.png"))
             (evidence / "receipt.json").write_text(
@@ -398,6 +597,19 @@ async def test_built_desktop_chat_reconnect_and_cancel(
                         "starts": calls.count("start"),
                         "cancelled": True,
                         "unique_turn_history_reload": True,
+                        "stream_reading": {
+                            "wheel": True,
+                            "resize": True,
+                            "scrollbar": True,
+                            "stationary_thumb_resumed": True,
+                            "virtual_history_turns": history_turns,
+                            "scroller_pointer_bindings": {
+                                "before": initial_geometry["pointer_bindings"],
+                                "after": final_geometry["pointer_bindings"],
+                            },
+                            "explicit_follow_resumed": True,
+                            "positions": reading_positions,
+                        },
                         "incremental_model_transport": "live loopback HTTP/SSE",
                         "approval_reload": "passed"
                         if os.name == "posix"
