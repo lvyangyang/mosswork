@@ -163,7 +163,7 @@ jobs:
       - name: Build the actual dashboard and check browser regressions
         run: |
           npm --prefix dashboard ci --no-audit --no-fund
-          npm --prefix dashboard run build
+          NODE_OPTIONS=--max-old-space-size=4096 npm --prefix dashboard run build
           npm --prefix dashboard test -- --maxWorkers=1 src/hooks/useBrowserStream.test.tsx src/hooks/useBrowserKeyboardInput.test.tsx src/utils/browserCanvas.test.ts src/pages/Chat/hooks/useChat.cancel.test.ts
           uv run --locked pytest tests/unit/agents/test_browser_profile_middleware.py tests/unit/api/test_browser_stream_input.py tests/unit/api/test_browser_stream_mouse.py tests/unit/api/test_browser_stream_listen.py tests/unit/api/test_browser_stream_normalize_nav.py tests/integration/test_browser_api.py tests/integration/test_chat_ws.py tests/unit/gateway/test_preempt_stop_cancel.py -q
       - name: Exercise the real browser tool and input barrier
