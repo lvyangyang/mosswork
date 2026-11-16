@@ -188,6 +188,23 @@ def normalize_launch_environment() -> None:
                     leading = False
                 normalized.append(entry)
             os.environ["PATH"] = os.pathsep.join(normalized)
+        if sys.platform == "darwin" and prefix:
+            git_exec = Path(prefix)
+            if git_exec.parts[-3:] == ("usr", "libexec", "git-core"):
+                developer = git_exec.parents[2]
+                block = [
+                    str(developer / "SDKs/MacOSX.sdk/usr/share/man"),
+                    str(developer / "usr/share/man"),
+                    str(developer / "Toolchains/XcodeDefault.xctoolchain/usr/share/man"),
+                ]
+                entries = os.environ.get("MANPATH", "").split(os.pathsep)
+                # Apple's Git launcher prepends this entire block each time.
+                # Preserve custom order, later copies and the empty default entry.
+                if entries[: len(block)] == block:
+                    tail = entries[len(block) :]
+                    while tail[: len(block)] == block:
+                        tail = tail[len(block) :]
+                    os.environ["MANPATH"] = os.pathsep.join(block + tail)
         return
     # Git for Windows prepends its own directories again in nested hooks. Keep
     # one consistent order for that installation and retain every other PATH entry.

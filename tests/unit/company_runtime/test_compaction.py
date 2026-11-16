@@ -284,7 +284,9 @@ async def test_long_tool_turn_auto_compacts_and_executes_write_once(company, tmp
     project.mkdir()
     (project / "large.txt").write_text(("historical detail " * 10 + "\n") * 200)
     try:
-        await run_turn(runtime)
+        # Bound the full multi-step graph/compaction/checkpoint fixture under
+        # coverage, while retaining the shared short-turn watchdog default.
+        await run_turn(runtime, completion_timeout=60)
         if trigger == "persistent_length":
             assert events[-1]["status"] == "failed", events[-1]
             assert summaries == 1

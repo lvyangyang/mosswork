@@ -61,15 +61,37 @@ async def test_resource_save_cancels_a_different_workers_live_stream(setup):
 
 
 @pytest.mark.asyncio
-async def test_done_is_not_visible_until_history_and_terminal_commit(setup):
+@pytest.mark.parametrize(
+    "final_frame",
+    [
+        {"type": "done"},
+        {"type": "completed"},
+        {"type": "execution.result", "result": {"ok": True}},
+    ],
+    ids=["done", "completed", "call-result"],
+)
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_final_frame_waits_for_history_and_terminal_commit(
+    setup, monkeypatch, final_frame, cleanup_fails
+):
     _, repo, user = setup
     service = ExecutionService(repo, node="worker", incarnation="boot1", role="worker")
     release = asyncio.Event()
     reached = asyncio.Event()
+    flushed = asyncio.Event()
     executions = []
     from contextvars import ContextVar
 
     scope = ContextVar("test_stream_scope", default=None)
+    emit = service._emit
+
+    async def observe_flush(active, frames):
+        has_token = any(frame.get("text") == "hello" for frame in frames)
+        await emit(active, frames)
+        if has_token:
+            flushed.set()
+
+    monkeypatch.setattr(service, "_emit", observe_flush)
 
     async def handler(run, decision):
         executions.append(run["run_id"])
@@ -78,9 +100,11 @@ async def test_done_is_not_visible_until_history_and_terminal_commit(setup):
         try:
             yield {"type": "token", "text": "hello"}
             assert scope.get() == run["run_id"]
-            yield {"type": "done"}
+            yield final_frame
             reached.set()
             await release.wait()  # Final history projection is still in progress.
+            if cleanup_fails:
+                raise RuntimeError("history finalization failed")
         finally:
             scope.reset(token)
 
@@ -89,16 +113,22 @@ async def test_done_is_not_visible_until_history_and_terminal_commit(setup):
     await service.start()
     try:
         await asyncio.wait_for(reached.wait(), 5)
+        # Wait for an actual committed flush after both frames were queued.
+        # An immediate read could miss the early-result regression by scheduling.
+        await asyncio.wait_for(flushed.wait(), 5)
         assert repo.get(run["run_id"])["state"] == "running"
         assert not any(
-            f["type"] == "done"
+            f["type"] == final_frame["type"]
             for e in repo.events(run["run_id"], user=user)
             for f in e["payload"].get("frames", [])
         )
         release.set()
         events = [event async for event in service.replay(run["run_id"], user=user)]
-        assert repo.get(run["run_id"])["state"] == "completed"
-        assert events[-1]["payload"]["frames"] == [{"type": "done"}]
+        expected = "unknown" if cleanup_fails else "completed"
+        assert repo.get(run["run_id"])["state"] == expected
+        assert events[-1]["payload"]["state"] == expected
+        assert events[-1]["payload"]["frames"] == ([] if cleanup_fails else [final_frame])
+        assert (repo.active("one") is not None) == cleanup_fails
         assert submit(repo, user)["run_id"] == run["run_id"]
         assert executions == [run["run_id"]]
     finally:
