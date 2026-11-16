@@ -755,6 +755,29 @@ def independent_tool_checks(
         and not helper.git(root, "ls-files", "--others", "--exclude-standard", "-z")
     )
     eligible = base is not None and profile(root, complete) == "tools" and indexed_source
+    if not eligible:
+        blockers: dict[str, Any] = {}
+        if base is None:
+            blockers["base"] = "accepted-main ancestor unavailable"
+        if profile(root, complete) != "tools":
+            blockers["complete_scope"] = "pending branch/worktree inputs require application checks"
+        if not args.worktree:
+            for label, command in (
+                ("unstaged", ("diff", "--name-only", "--no-ext-diff", "--no-textconv", "-z")),
+                ("untracked", ("ls-files", "--others", "--exclude-standard", "-z")),
+            ):
+                names = paths(helper.git(root, *command))
+                if names:
+                    blockers[label] = {"paths": names[:20], "total": len(names)}
+        result["reuse_blockers"] = blockers
+        print(
+            "TOOLS_GATE_INPUTS: "
+            + json.dumps(blockers, ensure_ascii=True)
+            + ". Original fresh tool checks remain required. Stage intended source; keep "
+            "generated reports outside the checkout before the next Make/hook sequence. "
+            "Restore matching inputs and rerun the original gate; do not edit its history.",
+            flush=True,
+        )
     actual: dict[str, Any] = {}
     status = engine.validate(
         root,
