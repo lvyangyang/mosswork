@@ -27,6 +27,7 @@ from octop.infra.skills.skill_package_store import (
 )
 from octop.infra.skills.skillhub_market import SkillHubMarketError as SkillHubDownloadError
 from octop.infra.users.identity import User
+from octop.infra.utils.asyncio import offload
 from octop.infra.utils.frontmatter import parse_frontmatter
 from octop.infra.utils.locale import Locale, resolve_request_locale
 
@@ -440,7 +441,7 @@ async def delete_skill_package(
     store = _store(server)
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
     store.assert_can_mutate(row, user)
-    store.delete_package(package_id)
+    await offload(store.delete_package, package_id)
     if server.app_runtime is not None:
         await server.app_runtime.agent_registry.strip_skill_package_id(package_id)
 
@@ -499,10 +500,12 @@ async def create_package_skill(
             resolve_request_locale(request),
             name=slug,
         )
-    store.write_skill(
+    await offload(
+        store.write_skill,
         package_id,
         slug,
         _files_from_package_skill_body(content=body.content, files=body.files),
+        overwrite=body.overwrite,
     )
     if server.app_runtime is not None:
         await server.app_runtime.agent_registry.refresh_agents_for_package(package_id)
@@ -522,7 +525,8 @@ async def update_package_skill(
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
     store.assert_can_mutate(row, user)
     _package_skill_or_404(store, package_id, slug)
-    store.write_skill(
+    await offload(
+        store.write_skill,
         package_id,
         slug,
         _files_from_package_skill_body(content=body.content, files=body.files),
@@ -548,7 +552,7 @@ async def delete_package_skill(
     row = _package_or_404(store, package_id, locale=resolve_request_locale(request))
     store.assert_can_mutate(row, user)
     _package_skill_or_404(store, package_id, slug)
-    store.delete_skill(package_id, slug)
+    await offload(store.delete_skill, package_id, slug)
     if server.app_runtime is not None:
         await server.app_runtime.agent_registry.refresh_agents_for_package(package_id)
 
@@ -571,7 +575,9 @@ class _PackageInstallTarget:
         store: SkillPackageStore,
         package_id: str,
         server: MossworkServer,
+        overwrite: bool = False,
     ) -> None:
+        self._overwrite = overwrite
         self._store = store
         self._package_id = package_id
         self._server = server
@@ -580,7 +586,9 @@ class _PackageInstallTarget:
         return _package_has_skill(self._store, self._package_id, slug)
 
     async def write_files(self, slug: str, files: list[tuple[str, bytes]]) -> None:
-        self._store.write_skill(self._package_id, slug, files)
+        await offload(
+            self._store.write_skill, self._package_id, slug, files, overwrite=self._overwrite
+        )
 
     async def after_install(self, slug: str, *, enable: bool | None = None) -> None:
         del slug, enable
@@ -621,7 +629,9 @@ async def import_package_skill(
     if not is_supported_skill_url(bundle_url):
         raise MossworkError.localized(ErrorCode.SKILL_IMPORT_UNSUPPORTED_URL, locale)
 
-    target = _PackageInstallTarget(store=store, package_id=package_id, server=server)
+    target = _PackageInstallTarget(
+        store=store, package_id=package_id, server=server, overwrite=body.overwrite
+    )
     try:
         package = await asyncio.to_thread(
             resolve_url_import,
@@ -732,7 +742,9 @@ async def hub_install_package_skill(
     if len(icon_url) > 2048 or (icon_url and not valid_skillhub_icon_url(icon_url)):
         raise HTTPException(status_code=400, detail="icon_url must be an HTTP(S) URL")
 
-    target = _PackageInstallTarget(store=store, package_id=package_id, server=server)
+    target = _PackageInstallTarget(
+        store=store, package_id=package_id, server=server, overwrite=body.overwrite
+    )
     transport = "http"
     try:
         files = await download_skillhub_package(skill_name)

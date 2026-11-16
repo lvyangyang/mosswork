@@ -502,6 +502,7 @@ class AgentManager:
         self._reload_worker_running: dict[str, bool] = {}
         self._reload_tasks: dict[str, asyncio.Task[None]] = {}
         self._bootstrap_graph_refresh_pending: set[str] = set()
+        self._skill_package_refresh_pending: set[str] = set()
         self._bootstrap_display: dict[str, bool] = {}
         # Chat user id used to resolve connectors when agent.user_id is NULL (shared agents).
         self._connector_user_override: dict[str, int] = {}
@@ -1615,6 +1616,7 @@ class AgentManager:
             event.set()
 
     async def _begin_invocation(self, agent_id: str) -> None:
+        self._apply_pending_skill_package_refresh(agent_id)
         self._invocation_waiters[agent_id] = self._invocation_waiters.get(agent_id, 0) + 1
         try:
             while event := self._history_backfills.get(agent_id):
@@ -1634,6 +1636,7 @@ class AgentManager:
             self._active_invocations[agent_id] = active
         else:
             self._active_invocations.pop(agent_id, None)
+            self._apply_pending_skill_package_refresh(agent_id)
 
     @asynccontextmanager
     async def _track_invocation(self, agent_id: str) -> AsyncIterator[None]:
@@ -2787,7 +2790,10 @@ class AgentManager:
             self.sync_skill_package_dirs(agent_id)
 
     def sync_skill_package_dirs(self, agent_id: str) -> None:
-        """Hot-update ``skills_dir`` on the running harness agent (no rebuild)."""
+        """Refresh skills after active invocations finish; keep the same Agent."""
+        if self.is_agent_active(agent_id):
+            self._skill_package_refresh_pending.add(agent_id)
+            return
         try:
             agent = self.get_agent(agent_id)
         except MossworkError:
@@ -2817,6 +2823,17 @@ class AgentManager:
             init_graph = getattr(agent, "_init_graph", None)
             if callable(init_graph):
                 init_graph()
+
+    def _apply_pending_skill_package_refresh(self, agent_id: str) -> None:
+        if agent_id not in self._skill_package_refresh_pending or self.is_agent_active(agent_id):
+            return
+        try:
+            self.sync_skill_package_dirs(agent_id)
+            self._skill_package_refresh_pending.discard(agent_id)
+        except Exception:
+            # Retain the pending marker so the next turn can retry. Never turn
+            # a successful conversation into a failed one because refresh failed.
+            logger.exception("Skill package refresh deferred for agent %s", agent_id)
 
     def validate_skill_package_ids(self, package_ids: list[str]) -> list[str]:
         """Normalize package ids and ensure each package still exists."""
@@ -2919,7 +2936,10 @@ class AgentManager:
         for row in self._repos.agent_repo.list_all(include_disabled=False):
             if package_id not in skill_package_ids_list(self.get_config(row.agent_id)):
                 continue
+            self._skill_package_refresh_pending.add(row.agent_id)
             self.sync_skill_package_dirs(row.agent_id)
+            if not self.is_agent_active(row.agent_id):
+                self._skill_package_refresh_pending.discard(row.agent_id)
 
     async def strip_skill_package_id(self, package_id: str) -> None:
         """Remove a deleted package id from every agent and hot-sync running agents."""

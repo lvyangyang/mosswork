@@ -523,6 +523,8 @@
     "MARKET_CONFLICT": "资源身份、版本或审核状态发生冲突，请刷新后重试。",
     "MARKET_DEPENDENCY_UNAVAILABLE": "依赖的技能版本未发布或已下架，请先处理依赖。",
     "MARKET_CONTENT_CORRUPT": "资源包内容缺失或摘要校验失败，请联系管理员。",
+    "MARKET_SKILL_CONFLICT": "技能“{slug}”与已有技能来源或其他技能的固定依赖冲突，请使用其他技能包。",
+    "MARKET_INSTALL_CHANGED": "技能包内容已变化，请重新预览并确认安装。",
     "MARKET_INSTALL_UNSUPPORTED": "该资源声明了当前安装器尚不支持的运行环境、必填参数或能力。请使用通用服务器资源，或完成运行适配后再安装。"
   },
   "desktop": {

@@ -302,6 +302,8 @@
     "MARKET_CONFLICT": "Resource identity, version or review state conflicts. Refresh and try again.",
     "MARKET_DEPENDENCY_UNAVAILABLE": "A required skill version is unpublished or unlisted. Resolve dependencies first.",
     "MARKET_CONTENT_CORRUPT": "Package content is missing or its digest failed verification. Contact an administrator.",
+    "MARKET_SKILL_CONFLICT": "Skill “{{slug}}” conflicts with an existing source or another skill’s pinned dependency. Use a different package.",
+    "MARKET_INSTALL_CHANGED": "Package contents changed. Preview and confirm the installation again.",
     "MARKET_INSTALL_UNSUPPORTED": "This resource requires an execution environment, configuration or capability not supported by this installer. Use a portable server package or complete its runtime integration first.",
     "PHONE_AUTH_FAILED": "Unable to complete phone verification.",
     "IDENTITY_REQUEST_INVALID": "Invalid identity request.",
@@ -7206,6 +7208,28 @@
     "contactAdmin": "Contact an administrator to manage resources or grant submission access."
   },
   "localSkillMarket": {
+    "target": "Target skill package",
+    "chooseTarget": "Search or select an editable skill package",
+    "newPackage": "Create a separate package",
+    "targetFixed": "Install into current package: {{name}}",
+    "reinstall": "Reinstall",
+    "update": "Update",
+    "rollback": "Roll back",
+    "confirmInstall": "Confirm installation",
+    "confirmTarget": "Install {{skill}} v{{version}} into “{{name}}”",
+    "installedVersion": "Installed v{{version}}",
+    "installedExisting": "Installed into “{{name}}”. You can add more skills. Linked Agents refresh after current executions finish.",
+    "existingHint": "Install into the selected package. Only this skill and dependencies requiring updates are replaced. Compatible dependencies are reused.",
+    "replaceWarning": "Replacement overwrites the affected skill directories and removes obsolete files. Other skills are preserved.",
+    "modifiedWarning": "Local edits detected: {{slugs}}. Confirming installation overwrites these edits.",
+    "rollbackWarning": "The selected version is older than the installed version. Confirm to roll back.",
+    "refreshFailed": "Skills were installed, but linked Agents could not refresh. Retry refresh without reinstalling.",
+    "retryRefresh": "Retry Agent refresh",
+    "operation": {
+      "install": "Add",
+      "replace": "Replace",
+      "reuse": "Reuse dependency"
+    },
     "hint": "Browse skills published in this instance. Inspect a release and its dependencies, then install it into a skill package.",
     "search": "Search published skills",
     "manage": "Manage resource market",
@@ -7219,7 +7243,23 @@
     "installFailed": "Installation failed. Please try again.",
     "snapshotHint": "Creates an independent skill package containing the selected release and all pinned dependencies. Existing packages are never overwritten. Mount it under an expert’s Skills → Skill packages after installation.",
     "source": "Market source v{{version}}",
-    "sourceHint": "Records the original market release. Local package edits do not change the published release."
+    "sourceHint": "Records the original market release. Local package edits do not change the published release.",
+    "installTitle": "Install “{{name}}” into a skill package",
+    "packagesFailed": "Could not load editable skill packages. Please retry.",
+    "packageOption": "{{name}} · {{count}} skills",
+    "noWritablePackages": "No editable skill packages yet. Create a package to install this skill.",
+    "createPackage": "+ Create a skill package",
+    "useExisting": "Choose an existing package",
+    "checking": "Checking versions, dependencies and replacements…",
+    "notInstalled": "This skill is not installed in the selected package.",
+    "installedSkill": "Installed “{{skill}} v{{version}}” into “{{name}}”.",
+    "viewPackage": "View skill package",
+    "confirmAction": {
+      "install": "Confirm installation",
+      "reinstall": "Confirm reinstallation",
+      "update": "Confirm update",
+      "rollback": "Confirm rollback"
+    }
   },
   "humanReview": {
     "title": "Model review",

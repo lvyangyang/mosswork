@@ -523,6 +523,8 @@
     "MARKET_CONFLICT": "Resource identity, version or review state conflicts. Refresh and try again.",
     "MARKET_DEPENDENCY_UNAVAILABLE": "A required skill version is unpublished or unlisted. Resolve dependencies first.",
     "MARKET_CONTENT_CORRUPT": "Package content is missing or its digest failed verification. Contact an administrator.",
+    "MARKET_SKILL_CONFLICT": "Skill “{slug}” conflicts with an existing source or another skill’s pinned dependency. Use a different package.",
+    "MARKET_INSTALL_CHANGED": "Package contents changed. Preview and confirm the installation again.",
     "MARKET_INSTALL_UNSUPPORTED": "This resource requires an execution environment, configuration or capability not supported by this installer. Use a portable server package or complete its runtime integration first."
   },
   "desktop": {

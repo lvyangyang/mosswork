@@ -1,9 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "antd";
 import type { ReactNode } from "react";
 import ResourceMarketPage from "./index";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import { localSkillMarketApi } from "../../api/modules/localSkillMarket";
+import { skillPackagesApi } from "../../api/modules/skillPackages";
+vi.mock("../../hooks/useCurrentUser", () => ({
+  useCurrentUser: () => ({ id: 1, role: "admin" }),
+}));
+vi.mock("../../api/modules/localSkillMarket", () => ({
+  localSkillMarketApi: {
+    detail: vi.fn(),
+    preview: vi.fn(),
+    installExisting: vi.fn(),
+    install: vi.fn(),
+  },
+}));
+vi.mock("../../api/modules/skillPackages", () => ({
+  skillPackagesApi: { listWritable: vi.fn() },
+}));
+function CurrentPath() {
+  return <output>{useLocation().pathname}</output>;
+}
 import {
   resourceMarketApi,
   type MarketDetail,
@@ -11,8 +31,8 @@ import {
 } from "../../api/modules/resourceMarket";
 import { authApi } from "../../api/modules/auth";
 
-function translate(key: string) {
-  return key;
+function translate(key: string, values?: Record<string, unknown>) {
+  return key === "localSkillMarket.packageOption" ? String(values?.name) : key;
 }
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: translate }) }));
 vi.mock("../../layouts/PageShell", () => ({
@@ -141,9 +161,12 @@ describe("ResourceMarket", () => {
   it("connects offline import, draft submission, administrator review and release history", async () => {
     const user = userEvent.setup();
     render(
-      <App>
-        <ResourceMarketPage />
-      </App>,
+      <MemoryRouter initialEntries={["/resource-market"]}>
+        <App>
+          <CurrentPath />
+          <ResourceMarketPage />
+        </App>
+      </MemoryRouter>,
     );
     await screen.findByText("resourceMarket.empty");
     await user.click(
@@ -193,9 +216,12 @@ describe("ResourceMarket", () => {
       ReturnType<typeof authApi.me>
     >);
     render(
-      <App>
-        <ResourceMarketPage />
-      </App>,
+      <MemoryRouter initialEntries={["/resource-market"]}>
+        <App>
+          <CurrentPath />
+          <ResourceMarketPage />
+        </App>
+      </MemoryRouter>,
     );
     await user.click(
       await screen.findByRole("button", { name: /Inspection skill/ }),
@@ -218,4 +244,103 @@ describe("ResourceMarket", () => {
       screen.queryByRole("button", { name: "resourceMarket.unlist" }),
     ).not.toBeInTheDocument();
   });
+});
+
+it("installs a published skill into a chosen package without navigating or opening a second market", async () => {
+  detail.drafts = [];
+  detail.resource.version_count = 1;
+  detail.resource.recommended_version_id = "version1";
+  detail.versions = [
+    {
+      version_id: "version1",
+      resource_id: "resource1",
+      version: "1.0.0",
+      object_sha256: draft.object_sha256,
+      manifest,
+      published_at: 1_700_000_000,
+    },
+  ];
+  const release = {
+    resource_id: "resource1",
+    version_id: "version1",
+    version: "1.0.0",
+    object_sha256: draft.object_sha256,
+    name: "Inspection skill",
+    description: "Offline test",
+    dependencies: [],
+    lock: [],
+  };
+  vi.mocked(skillPackagesApi.listWritable).mockResolvedValue([
+    {
+      id: "target",
+      name: "Production",
+      skill_count: 3,
+      description: "",
+      created_by: "1",
+      created_at: "",
+      updated_at: "",
+    },
+  ]);
+  vi.mocked(localSkillMarketApi.detail).mockResolvedValue({
+    ...release,
+    slug: "inspection",
+    changelog: "",
+    versions: [],
+    file_contents: [],
+    runtime: {},
+    configuration: {},
+  });
+  vi.mocked(localSkillMarketApi.preview).mockResolvedValue({
+    package_id: "target",
+    package_name: "Production",
+    action: "install",
+    installed_version: null,
+    token: "token",
+    changes: [],
+    modified_slugs: [],
+    source: release,
+  });
+  vi.mocked(localSkillMarketApi.installExisting).mockResolvedValue({
+    package: { id: "target", name: "Production", skill_count: 4 },
+    source: release,
+  });
+  const user = userEvent.setup();
+  render(
+    <MemoryRouter initialEntries={["/resource-market"]}>
+      <App>
+        <CurrentPath />
+        <ResourceMarketPage />
+      </App>
+    </MemoryRouter>,
+  );
+  await user.click(
+    await screen.findByRole("button", { name: /Inspection skill/ }),
+  );
+  await user.click(
+    await screen.findByRole("button", { name: "localSkillMarket.install" }),
+  );
+  const dialog = (
+    await screen.findByText("localSkillMarket.installTitle")
+  ).closest('[role="dialog"]') as HTMLElement;
+  expect(screen.getByText("/resource-market")).toBeInTheDocument();
+  await user.click(
+    within(dialog).getByRole("combobox", { name: "localSkillMarket.target" }),
+  );
+  await user.click(await screen.findByText("Production"));
+  const confirm = await within(dialog).findByRole("button", {
+    name: "localSkillMarket.confirmAction.install",
+  });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  await user.click(confirm);
+  await screen.findByText("localSkillMarket.installedSkill");
+  expect(localSkillMarketApi.installExisting).toHaveBeenCalledWith(
+    "version1",
+    "target",
+    "token",
+  );
+  expect(localSkillMarketApi.install).not.toHaveBeenCalled();
+  expect(screen.getByText("/resource-market")).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "localSkillMarket.viewPackage" }),
+  ).toHaveAttribute("href", "/skill-packages?packageId=target");
 });

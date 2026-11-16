@@ -302,6 +302,8 @@
     "MARKET_CONFLICT": "资源身份、版本或审核状态发生冲突，请刷新后重试。",
     "MARKET_DEPENDENCY_UNAVAILABLE": "依赖的技能版本未发布或已下架，请先处理依赖。",
     "MARKET_CONTENT_CORRUPT": "资源包内容缺失或摘要校验失败，请联系管理员。",
+    "MARKET_SKILL_CONFLICT": "技能“{{slug}}”与已有技能来源或其他技能的固定依赖冲突，请使用其他技能包。",
+    "MARKET_INSTALL_CHANGED": "技能包内容已变化，请重新预览并确认安装。",
     "MARKET_INSTALL_UNSUPPORTED": "该资源声明了当前安装器尚不支持的运行环境、必填参数或能力。请使用通用服务器资源，或完成运行适配后再安装。",
     "PHONE_AUTH_FAILED": "无法完成手机验证。",
     "IDENTITY_REQUEST_INVALID": "身份请求的格式无效。",
@@ -7206,6 +7208,28 @@
     "contactAdmin": "请联系管理员管理资源或授予资源提交权限。"
   },
   "localSkillMarket": {
+    "target": "安装目标技能包",
+    "chooseTarget": "搜索或选择可编辑的技能包",
+    "newPackage": "新建独立技能包",
+    "targetFixed": "安装到当前技能包：{{name}}",
+    "reinstall": "重新安装",
+    "update": "更新",
+    "rollback": "回退版本",
+    "confirmInstall": "确认安装",
+    "confirmTarget": "将 {{skill}} v{{version}} 安装到“{{name}}”",
+    "installedVersion": "已安装 v{{version}}",
+    "installedExisting": "已安装到“{{name}}”，可继续安装其他技能。关联 Agent 将在当前执行结束后刷新。",
+    "existingHint": "安装到所选技能包，不创建新包。仅替换本技能目录及需要更新的依赖；兼容的现有依赖会复用。",
+    "replaceWarning": "替换会覆盖对应技能目录内的文件并移除旧版本多余文件，其他技能保持不变。",
+    "modifiedWarning": "检测到本地修改：{{slugs}}。确认安装将覆盖这些修改。",
+    "rollbackWarning": "所选版本低于当前版本，确认后将回退。",
+    "refreshFailed": "技能已安装成功，但关联 Agent 刷新失败。请重试刷新，无需重新安装。",
+    "retryRefresh": "重试刷新 Agent",
+    "operation": {
+      "install": "新增",
+      "replace": "替换",
+      "reuse": "复用已有依赖"
+    },
     "hint": "浏览本实例已上架的技能，查看版本及依赖后安装到技能包。",
     "search": "搜索已上架技能",
     "manage": "管理资源市场",
@@ -7219,7 +7243,23 @@
     "installFailed": "安装失败，请重试。",
     "snapshotHint": "安装会创建独立技能包，包含所选版本和全部固定依赖。同名技能包不会被覆盖。安装后可在专家的“技能 → 技能包”中挂载。",
     "source": "市场来源 v{{version}}",
-    "sourceHint": "记录最初安装的市场版本；技能包后续本地编辑不修改市场正式版本。"
+    "sourceHint": "记录最初安装的市场版本；技能包后续本地编辑不修改市场正式版本。",
+    "installTitle": "将「{{name}}」安装到技能包",
+    "packagesFailed": "加载可编辑的技能包失败，请重试。",
+    "packageOption": "{{name}} · {{count}} 个技能",
+    "noWritablePackages": "暂无可编辑的技能包。可以先新建技能包，再完成安装。",
+    "createPackage": "＋ 新建技能包",
+    "useExisting": "选择已有技能包",
+    "checking": "正在检查版本、依赖与覆盖范围…",
+    "notInstalled": "此技能包尚未安装该技能。",
+    "installedSkill": "已将「{{skill}} v{{version}}」安装到「{{name}}」。",
+    "viewPackage": "查看技能包",
+    "confirmAction": {
+      "install": "确认安装",
+      "reinstall": "确认重新安装",
+      "update": "确认更新",
+      "rollback": "确认回退版本"
+    }
   },
   "humanReview": {
     "title": "模型审阅",

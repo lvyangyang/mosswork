@@ -440,3 +440,43 @@ async def test_list_skill_summaries_relabels_mounted_package_skills(
     assert by_slug["pdf-reader"]["enabled"] is False
     assert by_slug["sheet-helper"]["kind"] == "workspace"
     assert by_slug["local-note"]["kind"] == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_skill_refresh_waits_for_last_active_turn(manager, monkeypatch):
+    from unittest.mock import MagicMock
+
+    manager._repos.skill_package_repo.create(id="PACK01", name="Package", created_by="1")
+    manager._repos.agent_repo.create(
+        agent_id="MOUNTED",
+        user_id=None,
+        name="mounted",
+        config_json='{"skill_package_ids":["PACK01"]}',
+    )
+    agent = MagicMock()
+    monkeypatch.setattr(manager, "get_agent", lambda _: agent)
+    await manager._begin_invocation("MOUNTED")
+    await manager._begin_invocation("MOUNTED")
+    await manager.refresh_agents_for_package("PACK01")
+    agent.reload_subagents.assert_not_called()
+    manager._end_invocation("MOUNTED")
+    agent.reload_subagents.assert_not_called()
+    manager._end_invocation("MOUNTED")
+    agent.reload_subagents.assert_called_once()
+    assert "MOUNTED" not in manager._skill_package_refresh_pending
+    assert manager.get_config("MOUNTED")["skill_package_ids"] == ["PACK01"]
+
+
+@pytest.mark.asyncio
+async def test_failed_deferred_skill_refresh_retries_next_turn(manager, monkeypatch):
+    from unittest.mock import Mock
+
+    manager._skill_package_refresh_pending.add("AGENT01")
+    sync = Mock(side_effect=[RuntimeError("temporary refresh error"), None])
+    monkeypatch.setattr(manager, "sync_skill_package_dirs", sync)
+    await manager._begin_invocation("AGENT01")
+    assert manager.is_agent_active("AGENT01")
+    assert "AGENT01" in manager._skill_package_refresh_pending
+    manager._end_invocation("AGENT01")
+    assert "AGENT01" not in manager._skill_package_refresh_pending
+    assert sync.call_count == 2

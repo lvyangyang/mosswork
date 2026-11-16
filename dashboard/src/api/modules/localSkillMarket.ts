@@ -33,11 +33,60 @@ export type LocalSkillCatalog = {
 export type LocalSkillInstallation = {
   package: { id: string; name: string; skill_count: number };
   source: LocalSkillSource;
+  refresh_failed?: boolean;
+};
+export type PackageMarketStatus = {
+  package_id: string;
+  name: string;
+  installed: {
+    resource_id: string;
+    version_id: string;
+    version: string;
+    slug: string;
+  }[];
+};
+export type SkillInstallPreview = {
+  package_id: string;
+  package_name: string;
+  action: "install" | "reinstall" | "update" | "rollback";
+  installed_version: string | null;
+  changes: {
+    slug: string;
+    version: string;
+    operation: "install" | "replace" | "reuse";
+  }[];
+  modified_slugs: string[];
+  token: string;
+  source: LocalSkillSource;
 };
 export const localSkillMarketApi = {
   list: (offset = 0, limit = 60) =>
     request<LocalSkillCatalog>(
       `/skill-packages/market?offset=${offset}&limit=${limit}`,
+    ),
+  status: (packageId: string) =>
+    request<PackageMarketStatus>(
+      `/skill-packages/market/packages/${encodeURIComponent(packageId)}/status`,
+    ),
+  preview: (versionId: string, packageId: string) =>
+    request<SkillInstallPreview>(
+      `/skill-packages/market/${encodeURIComponent(versionId)}/preview`,
+      { method: "POST", body: JSON.stringify({ package_id: packageId }) },
+    ),
+  installExisting: (versionId: string, packageId: string, token: string) =>
+    request<LocalSkillInstallation>(
+      `/skill-packages/market/${encodeURIComponent(versionId)}/install`,
+      {
+        method: "POST",
+        body: JSON.stringify({ package_id: packageId, token }),
+      },
+    ),
+  refresh: (packageId: string) =>
+    request<{ refresh_failed: boolean }>(
+      `/skill-packages/market/packages/${encodeURIComponent(
+        packageId,
+      )}/refresh`,
+      { method: "POST" },
     ),
   detail: (versionId: string) =>
     request<LocalSkillDetail>(

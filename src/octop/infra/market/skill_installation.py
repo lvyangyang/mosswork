@@ -58,7 +58,7 @@ class LocalSkillMarket:
         }
 
     def install(self, user: User, version_id: str, name: str) -> dict[str, Any]:
-        """Never merge into or overwrite a package currently mounted by an Agent."""
+        """Create a new package snapshot; target-aware installs use PackageSkillInstaller."""
         name = name.strip()
         if not name:
             raise invalid("package_name")
@@ -79,7 +79,9 @@ class LocalSkillMarket:
         with tempfile.TemporaryDirectory(
             prefix=".market-install-", dir=self.store.root
         ) as temporary:
-            staged = SkillPackageStore(repo=self.store.repo, root=Path(temporary))
+            staged = SkillPackageStore(
+                repo=self.store.repo, root=Path(temporary), lock_root=self.store.root
+            )
             for slug, content in grouped.items():
                 staged.write_skill(package_id, slug, content)
             # The receipt records original provenance; local edits can diverge.

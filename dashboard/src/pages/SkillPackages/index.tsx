@@ -69,6 +69,10 @@ import {
   SkillImportModal,
   type ZipImportSummary,
 } from "../Agent/Skills/components/SkillImportModal";
+import SkillMarketInstallModal, {
+  SkillMarketInstallFeedback,
+} from "../../components/SkillMarketInstallModal";
+import type { LocalSkillInstallation } from "../../api/modules/localSkillMarket";
 import ResourceMarketEntry from "../../components/ResourceMarketEntry";
 import skillStyles from "../Agent/Skills/index.module.less";
 import type { ParsedZipSkill } from "../Agent/Skills/components/parseSkillZip";
@@ -161,6 +165,7 @@ export default function SkillPackagesPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const marketVersion = searchParams.get("marketVersion");
+  const requestedPackageId = searchParams.get("packageId");
   const isMobile = useIsMobile();
   const { viewMode, setViewMode, showCardView } = useCardTableView("card");
   const [packages, setPackages] = useState<SkillPackage[]>([]);
@@ -175,9 +180,14 @@ export default function SkillPackagesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [hubOpen, setHubOpen] = useState(false);
-  useEffect(() => {
-    if (marketVersion) setHubOpen(true);
-  }, [marketVersion]);
+  const [hubBusy, setHubBusy] = useState(false);
+  const [hubInstallOpen, setHubInstallOpen] = useState(false);
+  const [installation, setInstallation] =
+    useState<LocalSkillInstallation | null>(null);
+  const [marketTarget, setMarketTarget] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [importing, setImporting] = useState(false);
   const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
   const [editingSkill, setEditingSkill] =
@@ -267,7 +277,15 @@ export default function SkillPackagesPage() {
   }, [loadPackages]);
 
   useEffect(() => {
+    if (requestedPackageId) {
+      void loadDetail(requestedPackageId);
+      setMobilePane("detail");
+    }
+  }, [requestedPackageId, loadDetail]);
+
+  useEffect(() => {
     if (
+      requestedPackageId ||
       isMobile ||
       loading ||
       detailLoading ||
@@ -277,7 +295,15 @@ export default function SkillPackagesPage() {
       return;
     }
     void loadDetail(packages[0].id);
-  }, [isMobile, loading, detailLoading, selectedId, packages, loadDetail]);
+  }, [
+    requestedPackageId,
+    isMobile,
+    loading,
+    detailLoading,
+    selectedId,
+    packages,
+    loadDetail,
+  ]);
 
   useEffect(() => {
     if (!isMobile) setMobilePane("list");
@@ -625,7 +651,10 @@ export default function SkillPackagesPage() {
             }}
             secondaryAction={{
               label: t("nav.resourceMarket"),
-              onClick: () => setHubOpen(true),
+              onClick: () => {
+                setMarketTarget(null);
+                setHubOpen(true);
+              },
               icon: <Store size={14} />,
               type: "default",
             }}
@@ -673,7 +702,10 @@ export default function SkillPackagesPage() {
                   <Button
                     icon={<Store size={15} />}
                     aria-label={t("nav.resourceMarket")}
-                    onClick={() => setHubOpen(true)}
+                    onClick={() => {
+                      setMarketTarget(null);
+                      setHubOpen(true);
+                    }}
                   />
                 </Tooltip>
               </div>
@@ -909,7 +941,14 @@ export default function SkillPackagesPage() {
                             <button
                               type="button"
                               className={skillStyles.toolbarBtn}
-                              onClick={() => setHubOpen(true)}
+                              onClick={() => {
+                                if (selected)
+                                  setMarketTarget({
+                                    id: selected.id,
+                                    name: selected.name,
+                                  });
+                                setHubOpen(true);
+                              }}
                             >
                               <Store size={14} />
                               {t("nav.resourceMarket")}
@@ -1077,6 +1116,10 @@ export default function SkillPackagesPage() {
       <Drawer
         title={t("nav.resourceMarket")}
         open={hubOpen}
+        mask={!hubInstallOpen}
+        closable={!hubBusy}
+        maskClosable={!hubBusy}
+        keyboard={!hubBusy}
         onClose={() => {
           setHubOpen(false);
           if (marketVersion) {
@@ -1089,9 +1132,10 @@ export default function SkillPackagesPage() {
         destroyOnHidden
       >
         <ResourceMarketEntry
-          initialVersionId={marketVersion}
+          targetPackage={marketTarget}
+          onBusyChange={setHubBusy}
+          onInstallOpenChange={setHubInstallOpen}
           onInstalled={(packageId) => {
-            setHubOpen(false);
             if (marketVersion) {
               const next = new URLSearchParams(searchParams);
               next.delete("marketVersion");
@@ -1104,6 +1148,27 @@ export default function SkillPackagesPage() {
           }}
         />
       </Drawer>
+      {installation ? (
+        <SkillMarketInstallFeedback result={installation} />
+      ) : null}
+      {marketVersion ? (
+        <SkillMarketInstallModal
+          key={marketVersion}
+          versionId={marketVersion}
+          onClose={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete("marketVersion");
+            setSearchParams(next, { replace: true });
+          }}
+          onInstalled={(result) => {
+            setInstallation(result);
+            setSelectedId(result.package.id);
+            void loadPackages({ silent: true });
+            void loadDetail(result.package.id);
+            if (isMobile) setMobilePane("detail");
+          }}
+        />
+      ) : null}
     </PageShell>
   );
 }

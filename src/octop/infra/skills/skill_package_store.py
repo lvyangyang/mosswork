@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - optional PostgreSQL driver
 
 from octop.infra.db.repos.skill_packages import SkillPackageRepo, SkillPackageRow
 from octop.infra.errors import ErrorCode, MossworkError
+from octop.infra.skills.package_lock import package_lock
 from octop.infra.skills.presentation import apply_skill_presentation
 from octop.infra.skills.skill_packages import (
     SkillPackageError,
@@ -69,9 +70,12 @@ def _allocate_package_id(repo: SkillPackageRepo) -> str:
 class SkillPackageStore:
     """Persist skill package contents below a host-local root."""
 
-    def __init__(self, *, repo: SkillPackageRepo, root: Path) -> None:
+    def __init__(
+        self, *, repo: SkillPackageRepo, root: Path, lock_root: Path | None = None
+    ) -> None:
         self.repo = repo
         self.root = root
+        self.lock_root = lock_root or root
 
     def create(
         self,
@@ -172,6 +176,8 @@ class SkillPackageStore:
         pack_id: str,
         slug: str,
         files: list[tuple[str, bytes]],
+        *,
+        overwrite: bool = True,
     ) -> None:
         try:
             safe_slug = validate_skill_slug(slug)
@@ -180,17 +186,24 @@ class SkillPackageStore:
             raise MossworkError(ErrorCode.SLASH_BAD_ARGS, str(exc)) from exc
         skill_dir = self.package_skills_dir(pack_id) / safe_slug
 
-        shutil.rmtree(skill_dir, ignore_errors=True)
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        for relative_path, content in normalized_files:
-            path = skill_dir / relative_path
-            if relative_path.endswith("/"):
-                # Empty directory marker ("ai/"): recreate the folder, write nothing.
-                path.mkdir(parents=True, exist_ok=True)
-                continue
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        self._update_skill_count(pack_id)
+        with package_lock(self.lock_root, pack_id):
+            if self.lock_root == self.root and self.repo.get(pack_id) is None:
+                raise MossworkError.localized(ErrorCode.SKILL_PACKAGE_NOT_FOUND)
+            if not overwrite and (skill_dir / "SKILL.md").is_file():
+                raise MossworkError.localized(
+                    ErrorCode.SKILL_ALREADY_EXISTS, name=safe_slug, details={"name": safe_slug}
+                )
+            shutil.rmtree(skill_dir, ignore_errors=True)
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            for relative_path, content in normalized_files:
+                path = skill_dir / relative_path
+                if relative_path.endswith("/"):
+                    # Empty directory marker ("ai/"): recreate the folder, write nothing.
+                    path.mkdir(parents=True, exist_ok=True)
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            self._update_skill_count(pack_id)
 
     def delete_skill(self, pack_id: str, slug: str) -> None:
         try:
@@ -198,12 +211,29 @@ class SkillPackageStore:
         except SkillPackageError as exc:
             raise MossworkError(ErrorCode.SLASH_BAD_ARGS, str(exc)) from exc
         skill_dir = self.package_skills_dir(pack_id) / safe_slug
-        shutil.rmtree(skill_dir, ignore_errors=True)
-        self._update_skill_count(pack_id)
+        from octop.infra.utils.json_file import read_json_object, write_json_atomic
+
+        with package_lock(self.lock_root, pack_id):
+            receipt_path = self.root / pack_id / "market-installations.json"
+            receipt = read_json_object(receipt_path)
+            legacy_path = self.root / pack_id / "market-source.json"
+            legacy = read_json_object(legacy_path) if receipt is None else None
+            if receipt is not None:
+                for resource_id, entry in list(receipt["resources"].items()):
+                    if entry["slug"] == safe_slug:
+                        del receipt["resources"][resource_id]
+                        receipt["roots"].pop(resource_id, None)
+                write_json_atomic(receipt_path, receipt)
+            elif legacy is not None:
+                legacy["deleted_slugs"] = sorted(set(legacy.get("deleted_slugs", [])) | {safe_slug})
+                write_json_atomic(legacy_path, legacy)
+            shutil.rmtree(skill_dir, ignore_errors=True)
+            self._update_skill_count(pack_id)
 
     def delete_package(self, pack_id: str) -> None:
-        self.repo.delete(pack_id)
-        shutil.rmtree(self.root / pack_id, ignore_errors=True)
+        with package_lock(self.lock_root, pack_id):
+            self.repo.delete(pack_id)
+            shutil.rmtree(self.root / pack_id, ignore_errors=True)
 
     def assert_can_mutate(self, row: SkillPackageRow, user: User) -> None:
         if self.can_mutate(row, user):
