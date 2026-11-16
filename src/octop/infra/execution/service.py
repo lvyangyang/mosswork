@@ -239,7 +239,7 @@ class ExecutionService:
                     if frame is not None:
                         raise frame
                     break
-                if frame.get("type") in {"done", "completed"}:
+                if frame.get("type") in {"done", "completed", "execution.result"}:
                     final_frames.append(frame)
                     continue
                 # Handler owns conversion from harness objects to public JSON.

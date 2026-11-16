@@ -49,7 +49,24 @@ async def test_pending_status_poll_cannot_interrupt_finalization(
     install_agent(server)
     runtime, events = runtime_for(client, tmp_path)
     polling = asyncio.Event()
+    model_waiting = asyncio.Event()
+    failures = 0
     send = client.http.send
+    sleep = asyncio.sleep
+
+    async def poll_after_tool_result(delay, result=None):
+        current = asyncio.current_task()
+        if (
+            delay == 5
+            and not polling.is_set()
+            and current is not None
+            and current.get_coro().__name__ == "watch"
+        ):
+            # Exercise the in-flight poll after the tool finishes, without racing
+            # cold startup against the watcher's real five-second interval.
+            await model_waiting.wait()
+            return result
+        return await sleep(delay, result)
 
     async def hold_poll(request, *args, **kwargs):
         current = asyncio.current_task()
@@ -65,16 +82,26 @@ async def test_pending_status_poll_cannot_interrupt_finalization(
 
     class FinishDuringPolling(ToolModel):
         async def astream(self, messages):
+            nonlocal failures
             if any(isinstance(message, ToolMessage) for message in messages):
+                model_waiting.set()
                 await asyncio.wait_for(polling.wait(), 10)
                 if action == "fail":
-                    raise RuntimeError("model failed during status poll")
+                    # Terminal failure isolates cleanup from retry/backoff timing.
+                    failures += 1
+                    request = httpx.Request("POST", "https://model.test/chat")
+                    raise httpx.HTTPStatusError(
+                        "model failed during status poll",
+                        request=request,
+                        response=httpx.Response(400, request=request),
+                    )
                 if action in {"cancel", "close"}:
                     await asyncio.Event().wait()
             async for chunk in super().astream(messages):
                 yield chunk
 
     monkeypatch.setattr(client.http, "send", hold_poll)
+    monkeypatch.setattr(runtime_module.asyncio, "sleep", poll_after_tool_result)
     server.app_runtime.agent_registry.get_agent("expert").model_factory.get_chat_model = (
         lambda ref: FinishDuringPolling()
     )
@@ -94,6 +121,7 @@ async def test_pending_status_poll_cannot_interrupt_finalization(
         elif action == "close":
             await asyncio.wait_for(runtime.close(), 10)
         await asyncio.wait_for(asyncio.gather(worker, return_exceptions=True), 10)
+        assert failures == (1 if action == "fail" else 0)
         expected = {"complete": "completed", "fail": "failed"}.get(action, "cancelled")
         assert (runtime.workspace / "thread1/report.txt").read_text() == "local report 42"
         assert "thread1" not in runtime.work
