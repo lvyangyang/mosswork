@@ -9,6 +9,7 @@
 ### Added
 
 - Canonical human review captures the original compiler document and reads records through current independent document/page grants and original-member audit. Production providers and comment delivery remain separate integration requirements.
+- Install published market skills into existing skill packages with target selection, per-package install/reinstall/update/rollback states, dependency checks and local-change warnings. Mounted Agents refresh after active conversations finish.
 
 ## [0.0.7] - 2026-11-11
 

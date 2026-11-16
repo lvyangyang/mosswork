@@ -34,5 +34,12 @@ async def test_openapi_has_bearer_security_and_descriptions(tmp_mosswork_home: P
             in messaging["requestBody"]["content"]["application/json"]["schema"]["properties"]
         )
         assert spec["paths"]["/api/im/media/{id}"]["get"]["summary"]
+        preview = spec["paths"]["/api/skill-packages/market/{version_id}/preview"]["post"]
+        assert preview["summary"]
+        assert preview["description"]
+        schema = spec["components"]["schemas"]["SkillInstallPreview"]
+        assert schema["properties"]["source"]["$ref"].endswith("/SkillInstallationSource")
+        assert schema["properties"]["changes"]["items"]["$ref"].endswith("/SkillChange")
+
     finally:
         await srv.stop()

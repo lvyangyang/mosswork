@@ -38,6 +38,7 @@ def make_manager(tmp_path):
     registry._reload_tasks = {}
     registry._isolated_backends = {}
     registry._active_invocations = {}
+    registry._skill_package_refresh_pending = set()
     registry._invocation_waiters = {}
     registry._history_backfills = {}
     registry.get_agent = lambda _: agent

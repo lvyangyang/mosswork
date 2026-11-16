@@ -19,17 +19,25 @@ import { Package, RefreshCw } from "lucide-react";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 import { userCan } from "../utils/permissions";
 import { apiErrorMessage } from "../utils/apiError";
-import { message } from "../utils/antdMessage";
 import {
   localSkillMarketApi,
   type LocalSkillDetail,
   type LocalSkillRelease,
+  type PackageMarketStatus,
+  type LocalSkillInstallation,
 } from "../api/modules/localSkillMarket";
 import styles from "./ResourceMarketEntry.module.less";
 import MarketIcon from "./MarketIcon";
+import SkillMarketInstallModal, {
+  SkillMarketInstallFeedback,
+  skillInstallAction,
+} from "./SkillMarketInstallModal";
 
 type Props = {
+  targetPackage?: { id: string; name: string } | null;
   initialVersionId?: string | null;
+  onBusyChange?: (busy: boolean) => void;
+  onInstallOpenChange?: (open: boolean) => void;
   onInstalled?: (packageId: string) => void;
 };
 
@@ -43,7 +51,13 @@ export default function ResourceMarketEntry(props: Props) {
   return <LocalSkillCatalog {...props} />;
 }
 
-function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
+function LocalSkillCatalog({
+  initialVersionId,
+  targetPackage,
+  onBusyChange,
+  onInstallOpenChange,
+  onInstalled,
+}: Props) {
   const { t } = useTranslation();
   const user = useCurrentUser();
   const [items, setItems] = useState<LocalSkillRelease[]>([]);
@@ -52,15 +66,47 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [versionId, setVersionId] = useState<string | null>(
-    initialVersionId ?? null,
-  );
+  const [versionId, setVersionId] = useState<string | null>(null);
   const [detail, setDetail] = useState<LocalSkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
-  const [packageName, setPackageName] = useState("");
-  const [installing, setInstalling] = useState(false);
+  const [installVersionId, setInstallVersionId] = useState<string | null>(
+    initialVersionId ?? null,
+  );
+  const [installation, setInstallation] =
+    useState<LocalSkillInstallation | null>(null);
+  const [status, setStatus] = useState<PackageMarketStatus | null>(null);
+  const [statusError, setStatusError] = useState("");
+  const [statusRevision, setStatusRevision] = useState(0);
   const loadSequence = useRef(0);
+  useEffect(() => {
+    onInstallOpenChange?.(Boolean(installVersionId));
+    return () => onInstallOpenChange?.(false);
+  }, [installVersionId, onInstallOpenChange]);
+  useEffect(() => {
+    let cancelled = false;
+    setStatus(null);
+    setStatusError("");
+    if (!targetPackage) return;
+    localSkillMarketApi.status(targetPackage.id).then(
+      (result) => {
+        if (!cancelled) setStatus(result);
+      },
+      (err) => {
+        if (!cancelled)
+          setStatusError(
+            apiErrorMessage(err, t("localSkillMarket.loadFailed"), t),
+          );
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [targetPackage, statusRevision, t]);
+  const currentStatus =
+    status?.package_id === targetPackage?.id ? status : null;
+  const actionLabel = (item: LocalSkillRelease) =>
+    t(`localSkillMarket.${skillInstallAction(item, currentStatus)}`);
   const load = useCallback(
     async (append = false) => {
       const sequence = ++loadSequence.current;
@@ -93,7 +139,7 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
     };
   }, [load]);
   useEffect(() => {
-    if (initialVersionId) setVersionId(initialVersionId);
+    if (initialVersionId) setInstallVersionId(initialVersionId);
   }, [initialVersionId]);
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +152,6 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
       .then((result) => {
         if (cancelled) return;
         setDetail(result);
-        setPackageName(`${result.name} v${result.version}`);
       })
       .catch((err) => {
         if (!cancelled)
@@ -122,28 +167,6 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
     };
   }, [versionId, t]);
 
-  const install = async () => {
-    if (!detail || !packageName.trim()) return;
-    setInstalling(true);
-    setDetailError("");
-    try {
-      const result = await localSkillMarketApi.install(
-        detail.version_id,
-        packageName.trim(),
-      );
-      message.success(
-        t("localSkillMarket.installed", { name: result.package.name }),
-      );
-      setVersionId(null);
-      onInstalled?.(result.package.id);
-    } catch (err) {
-      setDetailError(
-        apiErrorMessage(err, t("localSkillMarket.installFailed"), t),
-      );
-    } finally {
-      setInstalling(false);
-    }
-  };
   const search = query.trim().toLocaleLowerCase();
   const visible = items.filter((item) =>
     `${item.name} ${item.description}`.toLocaleLowerCase().includes(search),
@@ -151,6 +174,28 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
   return (
     <div className={styles.container}>
       <Alert type="info" showIcon message={t("localSkillMarket.hint")} />
+      {targetPackage ? (
+        <Typography.Text strong>
+          {t("localSkillMarket.targetFixed", { name: targetPackage.name })}
+        </Typography.Text>
+      ) : null}
+      {!versionId && installation ? (
+        <SkillMarketInstallFeedback
+          key={installation.package.id}
+          result={installation}
+        />
+      ) : null}
+      {statusError ? (
+        <Alert
+          type="error"
+          message={statusError}
+          action={
+            <Button onClick={() => setStatusRevision((v) => v + 1)}>
+              {t("common.refresh")}
+            </Button>
+          }
+        />
+      ) : null}
       <div className={styles.toolbar}>
         <Input.Search
           aria-label={t("localSkillMarket.search")}
@@ -161,7 +206,10 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
         />
         <Button
           icon={<RefreshCw size={14} />}
-          onClick={() => void load()}
+          onClick={() => {
+            setStatusRevision((v) => v + 1);
+            void load();
+          }}
           loading={loading}
         >
           {t("common.refresh")}
@@ -188,7 +236,11 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
                     size={28}
                     fallback={<Package size={18} />}
                   />
-                  <span>{item.name}</span>
+                  <Typography.Link
+                    onClick={() => setVersionId(item.version_id)}
+                  >
+                    {item.name}
+                  </Typography.Link>
                 </Space>
               }
               extra={<Tag>v{item.version}</Tag>}
@@ -196,9 +248,28 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
               <Typography.Paragraph type="secondary" ellipsis={{ rows: 3 }}>
                 {item.description}
               </Typography.Paragraph>
-              <Button onClick={() => setVersionId(item.version_id)}>
-                {t("localSkillMarket.details")}
-              </Button>
+              <Space wrap>
+                <Button onClick={() => setVersionId(item.version_id)}>
+                  {t("localSkillMarket.details")}
+                </Button>
+                <Button
+                  type="primary"
+                  onClick={() => setInstallVersionId(item.version_id)}
+                >
+                  {actionLabel(item)}
+                </Button>
+                {currentStatus?.installed.find(
+                  (entry) => entry.resource_id === item.resource_id,
+                ) ? (
+                  <Tag>
+                    {t("localSkillMarket.installedVersion", {
+                      version: currentStatus.installed.find(
+                        (entry) => entry.resource_id === item.resource_id,
+                      )?.version,
+                    })}
+                  </Tag>
+                ) : null}
+              </Space>
             </Card>
           ))}
         </div>
@@ -212,17 +283,17 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
         title={detail?.name ?? t("localSkillMarket.details")}
         open={Boolean(versionId)}
         width={760}
-        closable={!installing}
-        maskClosable={!installing}
+        mask={!installVersionId}
         onClose={() => setVersionId(null)}
         footer={
           <Button
             type="primary"
-            loading={installing}
-            disabled={!detail || detailLoading || !packageName.trim()}
-            onClick={() => void install()}
+            disabled={!detail || detailLoading}
+            onClick={() => {
+              if (detail) setInstallVersionId(detail.version_id);
+            }}
           >
-            {t("localSkillMarket.install")}
+            {detail ? actionLabel(detail) : t("localSkillMarket.install")}
           </Button>
         }
       >
@@ -232,13 +303,15 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
         ) : null}
         {detail ? (
           <Space direction="vertical" size="middle" className={styles.details}>
+            {installation ? (
+              <SkillMarketInstallFeedback result={installation} />
+            ) : null}
             <Typography.Paragraph>{detail.description}</Typography.Paragraph>
             <label className={styles.field}>
               <span>{t("resourceMarket.version")}</span>
               <Select
                 aria-label={t("resourceMarket.version")}
                 value={detail.version_id}
-                disabled={installing}
                 onChange={setVersionId}
                 options={detail.versions.map((version) => ({
                   value: version.version_id,
@@ -265,24 +338,23 @@ function LocalSkillCatalog({ initialVersionId, onInstalled }: Props) {
                 children: <pre className={styles.preview}>{file.content}</pre>,
               }))}
             />
-            <Alert
-              type="info"
-              showIcon
-              message={t("localSkillMarket.snapshotHint")}
-            />
-            <label className={styles.field}>
-              <span>{t("localSkillMarket.packageName")}</span>
-              <Input
-                aria-label={t("localSkillMarket.packageName")}
-                value={packageName}
-                maxLength={200}
-                disabled={installing}
-                onChange={(event) => setPackageName(event.target.value)}
-              />
-            </label>
           </Space>
         ) : null}
       </Drawer>
+      {installVersionId ? (
+        <SkillMarketInstallModal
+          key={installVersionId}
+          versionId={installVersionId}
+          targetPackage={targetPackage}
+          onClose={() => setInstallVersionId(null)}
+          onBusyChange={onBusyChange}
+          onInstalled={(result) => {
+            setInstallation(result);
+            setStatusRevision((value) => value + 1);
+            onInstalled?.(result.package.id);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

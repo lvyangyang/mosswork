@@ -19,7 +19,6 @@ import {
 } from "antd";
 import { Bot, Download, Package, Plus, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
 import { useCurrentUser } from "../../hooks/useCurrentUser";
 import { userCan } from "../../utils/permissions";
 import { authApi } from "../../api/modules/auth";
@@ -35,6 +34,10 @@ import { apiErrorMessage, parseApiError } from "../../utils/apiError";
 import { useServerTimezone } from "../../hooks/useServerTimezone";
 import { formatServerDateTime } from "../../utils/formatMessageTime";
 import MarketIcon from "../../components/MarketIcon";
+import SkillMarketInstallModal, {
+  SkillMarketInstallFeedback,
+} from "../../components/SkillMarketInstallModal";
+import type { LocalSkillInstallation } from "../../api/modules/localSkillMarket";
 import styles from "./index.module.less";
 
 function saveBlob(blob: Blob, name: string) {
@@ -74,6 +77,9 @@ export default function ResourceMarketPage() {
   const previewSequence = useRef(0);
   const listSequence = useRef(0);
   const [hasMore, setHasMore] = useState(false);
+  const [installVersionId, setInstallVersionId] = useState<string | null>(null);
+  const [installation, setInstallation] =
+    useState<LocalSkillInstallation | null>(null);
 
   const report = useCallback(
     (error: unknown) => {
@@ -489,9 +495,16 @@ export default function ResourceMarketPage() {
           {t("resourceMarket.loadMore")}
         </Button>
       )}
+      {!selected && installation ? (
+        <SkillMarketInstallFeedback
+          key={`${installation.package.id}-${installation.source.version_id}`}
+          result={installation}
+        />
+      ) : null}
       <Drawer
         title={detail?.resource.name || t("resourceMarket.details")}
         open={Boolean(selected)}
+        mask={!installVersionId}
         width={760}
         onClose={() => {
           if (!busy) setSelected(undefined);
@@ -501,6 +514,12 @@ export default function ResourceMarketPage() {
           <Spin />
         ) : (
           <div className={styles.stack}>
+            {installation ? (
+              <SkillMarketInstallFeedback
+                key={`${installation.package.id}-${installation.source.version_id}`}
+                result={installation}
+              />
+            ) : null}
             <Typography.Paragraph type="secondary">
               {detail.resource.description}
             </Typography.Paragraph>
@@ -579,15 +598,14 @@ export default function ResourceMarketPage() {
                               {detail.resource.kind === "skill" &&
                               detail.resource.listed &&
                               userCan(currentUser, "skill_packages") ? (
-                                <Link
-                                  to={`/skill-packages?marketVersion=${encodeURIComponent(
-                                    row.version_id,
-                                  )}`}
+                                <Button
+                                  size="small"
+                                  onClick={() =>
+                                    setInstallVersionId(row.version_id)
+                                  }
                                 >
-                                  <Button size="small">
-                                    {t("localSkillMarket.install")}
-                                  </Button>
-                                </Link>
+                                  {t("localSkillMarket.install")}
+                                </Button>
                               ) : null}
                               <Button
                                 size="small"
@@ -761,6 +779,14 @@ export default function ResourceMarketPage() {
           />
         </div>
       </Modal>
+      {installVersionId ? (
+        <SkillMarketInstallModal
+          key={installVersionId}
+          versionId={installVersionId}
+          onClose={() => setInstallVersionId(null)}
+          onInstalled={setInstallation}
+        />
+      ) : null}
     </PageShell>
   );
 }

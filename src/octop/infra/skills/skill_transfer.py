@@ -15,6 +15,7 @@ from octop.infra.skills.skill_packages import (
     read_skill_directory,
     validate_skill_slug,
 )
+from octop.infra.utils.asyncio import offload
 from octop.infra.utils.frontmatter import parse_frontmatter
 
 
@@ -218,5 +219,5 @@ async def copy_workspace_skill_to_package(
     destination = store.package_skills_dir(package_id) / safe_slug / "SKILL.md"
     if destination.is_file() and not overwrite:
         raise SkillTransferConflict(safe_slug)
-    store.write_skill(package_id, safe_slug, files)
+    await offload(store.write_skill, package_id, safe_slug, files, overwrite=overwrite)
     return safe_slug
