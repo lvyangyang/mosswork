@@ -347,6 +347,12 @@ func runtimeErrorText(code string) string {
 		"expert_not_owned":                       "当前专家不属于此账号或已停用，请选择自己的专家。",
 		"thread_not_owned":                       "此账号无权访问该专家会话，请重新选择会话。",
 		"model_not_available":                    "所选模型当前不可用，请重新选择公司提供的模型。",
+		"company_model_failed":                   "公司模型调用失败，请稍后重试；若持续出现请联系管理员检查模型服务。",
+		"company_model_timeout":                  "公司模型服务响应超时，请稍后重试；若持续出现请联系管理员检查模型服务。",
+		"company_model_connection_lost":          "公司模型服务连接中断，请稍后重试；若持续出现请联系管理员检查模型服务。",
+		"company_model_context_overflow":         "公司模型上下文超出限制，请缩短消息或减少附件内容后重试。",
+		"company_model_empty_response":           "公司模型服务未返回内容，请稍后重试；若持续出现请联系管理员检查模型服务。",
+		"company_model_output_truncated":         "公司模型输出未完整返回，请稍后重试；若持续出现请联系管理员检查模型服务。",
 		"company_capability_not_assigned":        "管理员尚未分配此公司能力，请联系管理员。",
 		"company_video_generation_not_assigned":  "管理员尚未分配生视频能力，请联系管理员。",
 		"company_speech_to_text_not_assigned":    "管理员尚未分配语音识别能力，请联系管理员。",
@@ -371,6 +377,12 @@ func runtimeErrorText(code string) string {
 	}
 	if message, ok := messages[code]; ok {
 		return message
+	}
+	if strings.HasPrefix(code, "company_model_http_") {
+		return "公司模型服务返回错误，请稍后重试；若持续出现请联系管理员检查模型服务。"
+	}
+	if strings.HasPrefix(code, "company_model_") {
+		return "公司模型调用失败，请稍后重试；若持续出现请联系管理员检查模型服务。"
 	}
 	for _, r := range code {
 		if r >= 0x4e00 && r <= 0x9fff {
