@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -23,7 +24,18 @@ from octop.infra.db.repos.company_runtime import RuntimeConflict
 from octop.infra.utils.asyncio import offload
 
 router = APIRouter(prefix="/company-runtime")
+logger = logging.getLogger(__name__)
 ID = r"^[A-Za-z0-9_-]{1,128}$"
+_SAFE_MODEL_FAILURE_CODES = frozenset(
+    {
+        "company_model_failed",
+        "company_model_timeout",
+        "company_model_connection_lost",
+        "company_model_context_overflow",
+        "company_model_empty_response",
+        "company_model_output_truncated",
+    }
+)
 
 
 class Document(BaseModel):
@@ -244,11 +256,33 @@ async def model(
     await svc.task(task_id, active=True)
 
     async def stream() -> AsyncIterator[str]:
+        emitted = False
         try:
             async for chunk in svc.model(task_id, body.model_dump()):
+                emitted = True
                 yield chunk
         except Exception as exc:
-            yield json.dumps(model_failure(exc)) + "\n"
+            failure = model_failure(exc)
+            failure_code = failure["error"]
+            if not isinstance(failure_code, str) or not (
+                failure_code in _SAFE_MODEL_FAILURE_CODES
+                or (
+                    failure_code.startswith("company_model_http_")
+                    and failure_code.removeprefix("company_model_http_").isdigit()
+                )
+            ):
+                failure_code = "unclassified"
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            status = status if status is not None else getattr(exc, "status_code", None)
+            logger.warning(
+                "Company model stream failed task=%s code=%s exception=%s status=%s emitted=%s",
+                task_id,
+                failure_code,
+                type(exc).__name__,
+                status,
+                emitted,
+            )
+            yield json.dumps(failure) + "\n"
 
     return StreamingResponse(
         stream(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store"}

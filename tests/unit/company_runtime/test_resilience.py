@@ -313,6 +313,37 @@ async def test_temporary_model_timeout_retries_without_replaying_tools(company, 
 
 
 @pytest.mark.asyncio
+async def test_unknown_model_failure_retries_without_replaying_tools(company, tmp_path, caplog):
+    server, client, _, _ = company
+    install_agent(server)
+    calls = 0
+
+    class UnclassifiedModel(ToolModel):
+        async def astream(self, messages):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("private provider failure")
+            async for chunk in super().astream(messages):
+                yield chunk
+
+    model = UnclassifiedModel()
+    server.app_runtime.agent_registry.get_agent("expert").model_factory.get_chat_model = (
+        lambda ref: model
+    )
+    runtime, events = runtime_for(client, tmp_path)
+    caplog.set_level("WARNING", logger="octop.api.routers.company_runtime")
+    try:
+        await run_turn(runtime)
+        assert events[-1]["status"] == "completed", events[-1]
+        assert calls == 3
+        assert "RuntimeError" in caplog.text
+        assert "private provider failure" not in caplog.text
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_partial_model_output_is_not_retried(company, tmp_path):
     from langchain_core.messages import AIMessageChunk
 

@@ -77,6 +77,13 @@ def test_unrelated_bad_request_does_not_trigger_compaction():
     assert model_failure(error) == {"error": "company_model_http_400", "retryable": False}
 
 
+def test_unknown_model_failure_is_retryable_before_the_first_chunk():
+    assert model_failure(RuntimeError("transient provider failure")) == {
+        "error": "company_model_failed",
+        "retryable": True,
+    }
+
+
 def test_model_errors_do_not_expose_provider_credentials():
     sentinel = "sk-model-failure-regression-only"
     request = httpx.Request("POST", "http://provider.invalid", headers={"Authorization": sentinel})

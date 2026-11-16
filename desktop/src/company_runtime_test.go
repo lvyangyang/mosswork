@@ -36,6 +36,23 @@ func TestRuntimeIPCRejectsStaleAndUnsupportedRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeModelFailureMessages(t *testing.T) {
+	if got := runtimeErrorText("company_model_failed"); got != "公司模型调用失败，请稍后重试；若持续出现请联系管理员检查模型服务。" {
+		t.Fatalf("unexpected model failure message: %s", got)
+	}
+	for _, code := range []string{
+		"company_model_timeout",
+		"company_model_connection_lost",
+		"company_model_http_503",
+		"company_model_unknown",
+	} {
+		if got := runtimeErrorText(code); strings.Contains(got, "检查公司连接和客户端工具包") {
+			t.Fatalf("model failure used generic connection message for %s: %s", code, got)
+		}
+	}
+}
+
 func TestCompanyRuntimeAccountDirectoriesAreIsolated(t *testing.T) {
 	t.Setenv("MOSSWORK_HOME", t.TempDir())
 	a := companyStateDir("https://one", 1)

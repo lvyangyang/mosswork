@@ -90,7 +90,7 @@ def model_failure(exc: Exception) -> dict[str, Any]:
             "error": f"company_model_http_{status}",
             "retryable": status in {408, 429} or status >= 500,
         }
-    return {"error": "company_model_failed", "retryable": False}
+    return {"error": "company_model_failed", "retryable": True}
 
 
 class CompanyRuntimeService:
