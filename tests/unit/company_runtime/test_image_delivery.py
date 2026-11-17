@@ -353,7 +353,7 @@ async def test_real_image_materialization_and_native_artifact_receipt(
     def gateway(request):
         calls.append(request)
         if request.method == "POST":
-            assert json.loads(request.content)["response_format"] == "url"
+            assert "response_format" not in json.loads(request.content)
             return httpx.Response(
                 200, json={"data": [{"url": "https://images.test/generated.png"}]}
             )

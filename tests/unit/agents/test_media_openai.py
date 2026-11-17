@@ -95,7 +95,7 @@ async def test_gateway_url_is_downloaded_and_only_download_is_retried(monkeypatc
         requests.append(request)
         if request.method == "POST":
             assert request.url.path == "/v1/images/generations"
-            assert json.loads(request.content)["response_format"] == "url"
+            assert "response_format" not in json.loads(request.content)
             return httpx.Response(200, json={"data": [{"url": "https://images.test/output.png"}]})
         assert str(request.url) == "https://images.test/output.png"
         assert "Authorization" not in request.headers
@@ -114,6 +114,29 @@ async def test_gateway_url_is_downloaded_and_only_download_is_retried(monkeypatc
     assert result[0].data == image
     assert [request.method for request in requests] == ["POST", "GET", "GET"]
     assert json.loads(requests[0].content)["size"] == "1024x1024"
+
+
+@pytest.mark.asyncio
+async def test_gateway_data_uri_in_url_is_decoded_without_download():
+    image = b"\x89PNG\r\n\x1a\ngenerated-content"
+    requests = []
+    data_uri = "data:image/png;base64," + base64.b64encode(image).decode()
+
+    def gateway(request):
+        requests.append(request)
+        assert request.method == "POST"
+        return httpx.Response(200, json={"data": [{"url": data_uri}]})
+
+    register_openai_media_provider()
+    config = MediaProviderConfig(
+        id="company", provider="openai", api_key="test", base_url="http://gateway.test/v1"
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(gateway)) as client:
+        provider = create_media_provider(config, client=client)
+        result = await provider.generate_image(ImageGenerationRequest(prompt="test"))
+    assert result[0].data == image
+    assert result[0].media_type == "image/png"
+    assert [request.method for request in requests] == ["POST"]
 
 
 @pytest.mark.asyncio
