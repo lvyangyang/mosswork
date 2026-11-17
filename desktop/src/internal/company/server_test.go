@@ -29,7 +29,7 @@ func TestServerCheckPlainIntranetAddress(t *testing.T) {
 		_, _ = w.Write([]byte(`{"setup_required":false}`))
 	}))
 	defer server.Close()
-	base, err := NewClient().CheckServer(context.Background(), server.URL)
+	base, err := NewClient(t.TempDir()).CheckServer(context.Background(), server.URL)
 	if err != nil || base != server.URL {
 		t.Fatal(base, err)
 	}
@@ -58,7 +58,7 @@ func TestServerCheckValidatesTLSResponseAndNoRedirects(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client := NewClient()
+			client := NewClient(t.TempDir())
 			if scenario != "untrusted" {
 				client.httpClient.Transport = server.Client().Transport
 			}

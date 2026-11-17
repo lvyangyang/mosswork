@@ -56,6 +56,7 @@ type App struct {
 	mu               sync.Mutex
 	quitting         bool
 	company          *company.Client
+	companyJournal   string
 	companyURL       string
 	companyUI        *companyui.Server
 	companyWindow    *application.WebviewWindow
@@ -411,11 +412,7 @@ func main() {
 		// alongside the login window; the worker joins the same preparation.
 		go func() { _, _ = ensureCompanyPortable() }()
 	}
-	api := &App{
-		store:   store,
-		sleep:   &sleepGuard{},
-		company: company.NewClient(),
-	}
+	api := newApp(store, defaultCompanyJournal())
 	if companyOnly || store.get().ConnectionMode != "local" {
 		api.companyURL, _ = company.BaseURL(companyServerURL(store.get()))
 	}

@@ -8,8 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -39,12 +37,8 @@ type Client struct {
 	files      *Files
 }
 
-func NewClient() *Client {
-	dir, _ := os.UserConfigDir()
-	journal := ""
-	if dir != "" {
-		journal = filepath.Join(dir, "mosswork", "company-operations")
-	}
+// NewClient uses the injected receipt directory and starts with no directory grants.
+func NewClient(journal string) *Client {
 	return &Client{files: NewFiles(journal), status: Status{State: "unpaired"}, httpClient: &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}

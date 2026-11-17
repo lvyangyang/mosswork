@@ -46,12 +46,15 @@ func startupTestApp(t *testing.T) *App {
 			}
 		}
 	}))
-	client := company.NewClient()
+	app := newApp(nil, t.TempDir())
+	client := app.company
 	t.Cleanup(func() { client.Close(false); server.Close() })
 	if err := client.Pair(context.Background(), server.URL, "mosswork-pair.test", "test", runtime.GOOS); err != nil {
 		t.Fatal(err)
 	}
-	return &App{company: client, companyURL: server.URL, workspaceNonce: "nonce", workspacePath: t.TempDir(), workspaceGrant: &company.Grant{}}
+	app.companyURL, app.workspaceNonce = server.URL, "nonce"
+	app.workspacePath, app.workspaceGrant = t.TempDir(), &company.Grant{}
+	return app
 }
 
 func TestRuntimePreparationDoesNotBlockImagePreview(t *testing.T) {

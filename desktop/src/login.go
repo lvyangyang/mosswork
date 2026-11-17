@@ -34,7 +34,7 @@ func (a *App) GetLoginConfig(ctx context.Context, address string) (company.Captc
 	if err := a.requireLoginPanel(ctx); err != nil {
 		return company.CaptchaConfig{}, err
 	}
-	return company.NewClient().LoginConfig(ctx, address)
+	return a.newCompanyClient().LoginConfig(ctx, address)
 }
 
 func (a *App) SaveLoginAddress(ctx context.Context, address string) error {
@@ -58,7 +58,7 @@ func (a *App) LoginCompany(ctx context.Context, input company.LoginInput) error 
 		return errors.New("正在登录，请稍候 / Sign in already in progress")
 	}
 	defer a.loginBusy.Store(false)
-	client := company.NewClient()
+	client := a.newCompanyClient()
 	base, result, err := client.Login(ctx, input)
 	if err != nil {
 		return err
@@ -107,7 +107,7 @@ func (a *App) showLogin(open bool) {
 	a.stopCompanyRuntimeLocked()
 	if a.company != nil && a.company.Status().State != "unpaired" {
 		a.company.Close(true)
-		a.company = company.NewClient()
+		a.company = a.newCompanyClient()
 	}
 	a.workspaceNonce = ""
 	a.workspacePath, a.workspaceError, a.workspaceGrant = "", "", nil

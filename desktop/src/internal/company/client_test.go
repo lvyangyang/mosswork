@@ -54,7 +54,7 @@ func testServer(t *testing.T, handler func(context.Context, *websocket.Conn, hel
 		}
 		handler(ctx, conn, h, identity)
 	}))
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	client.httpClient.Transport = server.Client().Transport // Trust only this test server's CA.
 	t.Cleanup(func() { client.Close(false); server.Close() })
 	return client, server.URL
@@ -162,7 +162,7 @@ func TestRejectCrossDeviceOwnerArbitraryToolAndExpiredCalls(t *testing.T) {
 func TestUntrustedCertificateFailsAndLeavesNoCredential(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("untrusted server reached") }))
 	defer server.Close()
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	if err := client.Pair(context.Background(), server.URL, "mosswork-pair.test", "PC", "darwin"); err == nil {
 		t.Fatal("accepted untrusted certificate")
 	}
@@ -206,7 +206,7 @@ func TestHTTPPairAndProbe(t *testing.T) {
 		_ = wsjson.Read(ctx, conn, &ignored)
 	}))
 	defer server.Close()
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	defer client.Close(false)
 	if err := client.Pair(context.Background(), server.URL, "mosswork-pair.test", "PC", "windows"); err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestReconnectUsesDeviceCredentialWithoutRePairing(t *testing.T) {
 		_ = wsjson.Read(ctx, conn, &ignored)
 	}))
 	defer server.Close()
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	client.httpClient.Transport = server.Client().Transport
 	defer client.Close(false)
 	if err := client.Pair(context.Background(), server.URL, "mosswork-pair.test", "PC", "darwin"); err != nil {
@@ -345,7 +345,6 @@ func TestNativeGrantAndFileCallOverTLS(t *testing.T) {
 		replies <- result.Result
 		_ = conn.Close(4001, "test_complete")
 	})
-	client.files = NewFiles(t.TempDir())
 	if err := client.Pair(context.Background(), base, "mosswork-pair.test", "PC", "windows"); err != nil {
 		t.Fatal(err)
 	}

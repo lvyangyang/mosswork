@@ -31,7 +31,7 @@ func TestEmployeeLoginOverHTTP(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	address := server.URL
 	config, err := client.LoginConfig(context.Background(), address)
 	if err != nil || config.Provider != "slider" {
@@ -51,7 +51,7 @@ func TestEmployeeLoginDoesNotRedirectCredentials(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
-	_, _, err := NewClient().Login(context.Background(), LoginInput{Address: server.URL, Username: "employee", Password: "sample-password"})
+	_, _, err := NewClient(t.TempDir()).Login(context.Background(), LoginInput{Address: server.URL, Username: "employee", Password: "sample-password"})
 	if err == nil || visited {
 		t.Fatal("followed login redirect")
 	}
@@ -65,7 +65,7 @@ func TestEmployeeLoginErrorsAreBoundedAndDoNotEchoSecrets(t *testing.T) {
 				w.Write([]byte(`{"detail":"sample-password"}`))
 			}))
 			defer server.Close()
-			_, _, err := NewClient().Login(context.Background(), LoginInput{Address: server.URL, Username: "employee", Password: "sample-password"})
+			_, _, err := NewClient(t.TempDir()).Login(context.Background(), LoginInput{Address: server.URL, Username: "employee", Password: "sample-password"})
 			if err == nil || strings.Contains(err.Error(), "sample-password") {
 				t.Fatal("invalid or unsafe error")
 			}
