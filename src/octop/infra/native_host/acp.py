@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Literal, NoReturn, SupportsIndex
 
 from acp.connection import Connection, StreamDirection, StreamEvent
 from acp.exceptions import RequestError
+from moss_harness.acp.attention import OrderedAttentionProjection
+from moss_harness.acp.runtime_status import supports_engine_observation
 
 from octop import __version__
 
@@ -122,6 +124,8 @@ class CohostAcpSession:
         self._prompt_lock = asyncio.Lock()
         self._request_ids: dict[str, str | int] = {}
         self._native_delivery = False
+        self._attention_supported = False
+        self._attention = OrderedAttentionProjection()
         self._legacy_prompt_used = False
         self._inputs = OrderedInputProjection(host.binding)
         self._context_input: ContextVar[NativeInputContext | None] = ContextVar(
@@ -143,6 +147,20 @@ class CohostAcpSession:
                 and not isinstance(request_id, bool)
             ):
                 self._request_ids[method] = request_id
+        elif event.message.get("method") == "_sudocode/session/attention_update":
+            try:
+                params = event.message.get("params")
+                if (
+                    not self._attention_supported
+                    or not isinstance(params, dict)
+                    or params.get("sessionId") != self.session_id
+                ):
+                    raise HostUnavailable("Foreign native attention stream")
+                self._attention.observe(params.get("update"))
+            except Exception:
+                self._attention.invalidate()
+                self._ready = False
+                self._host.close()
         elif (
             self._native_delivery
             and event.message.get("method") == "_sudocode/session/input_update"
@@ -274,6 +292,9 @@ class CohostAcpSession:
             )
             if not self._supports_required_protocol(initialized):
                 raise HostUnavailable("The original engine lacks required ACP capabilities")
+            self._attention_supported = supports_engine_observation(
+                initialized.get("_meta"), "attention"
+            )
             phase, method = "pre_load", None
             await host.check_ready("session_load", resource_ref)
             phase, method, load_attempted = "load", "session/load", True
@@ -403,7 +424,15 @@ class CohostAcpSession:
                     self._context_input.reset(token)
                     self._context_active = False
 
-        if method in {"session/update", "_sudocode/session/input_update"} and notification:
+        if (
+            method
+            in {
+                "session/update",
+                "_sudocode/session/input_update",
+                "_sudocode/session/attention_update",
+            }
+            and notification
+        ):
             try:
                 if (
                     self._closed
@@ -421,7 +450,20 @@ class CohostAcpSession:
                 await self._host.check_current()
                 if self._closed:
                     raise HostUnavailable("ACP update was withdrawn")
-                await self._on_update(method, params["update"])
+                if method == "_sudocode/session/attention_update":
+                    # Parsed wire order owns this projection. A delayed async
+                    # handler may not put an older request back on screen.
+                    snapshot = self._attention.snapshot
+                    if snapshot is None:
+                        raise HostUnavailable("Native attention is unavailable")
+                    if snapshot.revision != params["update"].get("revision"):
+                        return None
+                    await self._attention.deliver_current(
+                        snapshot.revision,
+                        lambda current: self._on_update(method, current.model_dump(mode="json")),
+                    )
+                else:
+                    await self._on_update(method, params["update"])
             except Exception:
                 # The SDK suppresses notification-handler errors. Retain a
                 # closed local gate so a broken projection cannot remain Ready.
@@ -648,6 +690,7 @@ class CohostAcpSession:
 
     async def close(self) -> None:
         """Withdraw context and close RPC tasks; native cleanup stays with its owner."""
+        self._attention.invalidate()
         self._input_epoch += 1
         self._inputs.invalidate()
         self._ready = False

@@ -601,3 +601,57 @@ async def test_prompt_task_cancellation_is_not_converted_to_ordinary_failure():
         with pytest.raises(HostUnavailable):
             await session.prompt("no replay")
         assert sum(method == "session/prompt" for method, _ in peer.calls) == 1
+
+
+async def test_attention_uses_original_connection_and_does_not_approve_tools():
+    async with wire() as (peer, authority, _host, _context, updates, attach):
+        peer.initialized["_meta"]["sudocode"]["attention"] = {"version": 1}
+        session = await attach()
+        request = {
+            "id": 9,
+            "reason": "permission",
+            "phase": "presented",
+            "agent": None,
+            "summary": "Bash",
+        }
+        await peer.connection.send_notification(
+            "_sudocode/session/attention_update",
+            {"sessionId": session.session_id, "update": {"revision": 1, "requests": [request]}},
+        )
+        async with asyncio.timeout(2):
+            while not updates:
+                await asyncio.sleep(0)
+        assert updates == [
+            ("_sudocode/session/attention_update", {"revision": 1, "requests": [request]})
+        ]
+        outcome = await peer.connection.send_request(
+            "session/request_permission",
+            {"sessionId": session.session_id, "toolCall": {}, "options": []},
+        )
+        assert outcome == {"outcome": {"outcome": "cancelled"}}
+        assert all("approve" not in operation for operation, _ in authority.operations)
+        await peer.connection.send_notification(
+            "_sudocode/session/attention_update",
+            {"sessionId": session.session_id, "update": {"revision": 2, "requests": []}},
+        )
+        async with asyncio.timeout(2):
+            while len(updates) < 2:
+                await asyncio.sleep(0)
+        assert updates[-1][1]["requests"] == []
+        await session.close()
+        assert session._attention.snapshot is None
+
+
+async def test_foreign_attention_cannot_be_forwarded_to_original_ui():
+    async with wire() as (peer, _authority, _host, _context, updates, attach):
+        peer.initialized["_meta"]["sudocode"]["attention"] = {"version": 1}
+        session = await attach()
+        await peer.connection.send_notification(
+            "_sudocode/session/attention_update",
+            {"sessionId": "foreign", "update": {"revision": 1, "requests": []}},
+        )
+        async with asyncio.timeout(2):
+            while session._ready:
+                await asyncio.sleep(0)
+        assert not updates
+        assert session._attention.snapshot is None
