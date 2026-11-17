@@ -71,7 +71,10 @@ function ThemedApp() {
   const themeConfig = {
     algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
     token: {
-      borderRadius: 10,
+      borderRadius: 8,
+      fontFamily: "var(--fn-font-family)",
+      fontSize: 14,
+      lineHeight: 1.5,
       ...(isMobile
         ? {
             fontSize: 15,
@@ -83,18 +86,18 @@ function ThemedApp() {
         : {}),
       ...(isDark
         ? {
-            colorBgBase: "#0f1117",
-            colorTextBase: "#e7e7ed",
-            colorBgContainer: "#0f1117",
-            colorBgElevated: "#1a1c28",
-            colorBgLayout: "#0b0d14",
+            colorBgBase: "var(--fn-bg-primary)",
+            colorTextBase: "var(--fn-text-primary)",
+            colorBgContainer: "var(--fn-bg-container)",
+            colorBgElevated: "var(--fn-bg-elevated)",
+            colorBgLayout: "var(--fn-bg-layout)",
             colorBgSpotlight: "rgba(0, 0, 0, 0.85)",
             colorBgMask: "rgba(5, 5, 8, 0.80)",
             colorBorder: "rgba(255,255,255,0.08)",
             colorBorderSecondary: "rgba(255,255,255,0.05)",
-            colorText: "rgba(255, 255, 255, 0.92)",
-            colorTextSecondary: "rgba(255, 255, 255, 0.64)",
-            colorTextTertiary: "rgba(255, 255, 255, 0.38)",
+            colorText: "var(--fn-text-primary)",
+            colorTextSecondary: "var(--fn-text-secondary)",
+            colorTextTertiary: "var(--fn-text-tertiary)",
             colorTextQuaternary: "rgba(255, 255, 255, 0.22)",
             colorFill: "rgba(255, 255, 255, 0.06)",
             colorFillSecondary: "rgba(255, 255, 255, 0.04)",
@@ -110,18 +113,42 @@ function ThemedApp() {
             ...brandTokens,
           }),
     },
-    components: isDark
-      ? {
-          Modal: { headerBg: "#1a1c28", contentBg: "#1a1c28" },
-          Input: { colorBgBase: "#0f1117" },
-          InputNumber: { colorBgBase: "#0f1117" },
-          Select: { colorBgBase: "#0f1117", selectorBg: "#0f1117" },
-          DatePicker: { colorBgBase: "#0f1117" },
-          Segmented: { itemSelectedBg: "#1a1c28" },
-          Card: { colorBgContainer: "#161822" },
-          Tooltip: { colorBgSpotlight: "#424242" },
-        }
-      : {},
+    components: {
+      Switch: {
+        colorPrimary: "var(--fn-color-brand)",
+        colorPrimaryHover: "var(--fn-color-brand-hover)",
+      },
+      Checkbox: {
+        colorPrimary: "var(--fn-color-brand)",
+        colorPrimaryHover: "var(--fn-color-brand-hover)",
+      },
+      Segmented: {
+        itemSelectedBg: "var(--fn-color-brand-light)",
+        itemSelectedColor: "var(--fn-color-brand-soft)",
+        itemHoverBg: "var(--fn-color-brand-bg)",
+      },
+      ...(isDark
+        ? {
+            Modal: {
+              headerBg: "var(--fn-bg-elevated)",
+              contentBg: "var(--fn-bg-elevated)",
+            },
+            Input: { colorBgBase: "var(--fn-bg-primary)" },
+            InputNumber: { colorBgBase: "var(--fn-bg-primary)" },
+            Select: {
+              colorBgBase: "var(--fn-bg-primary)",
+              selectorBg: "var(--fn-bg-primary)",
+            },
+            DatePicker: { colorBgBase: "var(--fn-bg-primary)" },
+            Segmented: {
+              itemSelectedBg: "var(--fn-color-brand-bg)",
+              itemSelectedColor: "var(--fn-text-primary)",
+            },
+            Card: { colorBgContainer: "var(--fn-bg-secondary)" },
+            Tooltip: { colorBgSpotlight: "#424242" },
+          }
+        : {}),
+    },
   };
 
   return (

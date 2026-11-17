@@ -1,5 +1,5 @@
 .navGroup {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 
   &:last-child {
     margin-bottom: 0;
@@ -12,7 +12,7 @@
   justify-content: space-between;
   gap: 6px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -66,20 +66,34 @@
   transition: background var(--fn-transition-fast);
 }
 
+.navItemActive {
+  border-inline-start: 3px solid var(--fn-color-brand);
+}
+
 .navItemMain {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
   padding: 0 12px;
-  height: 40px;
+  height: 36px;
   border: none;
   border-radius: var(--fn-radius-md);
   background: transparent;
   cursor: pointer;
   text-align: left;
+  line-height: 1.2;
   transition: color var(--fn-transition-fast);
+
+  /* Keep the SVG box and the label's glyph on the same visual baseline. */
+  > span:first-child {
+    line-height: 0;
+  }
+
+  > span:nth-child(2) {
+    line-height: 1.2;
+  }
 }
 
 .chatRailExpandBtn {

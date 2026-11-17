@@ -17,8 +17,17 @@ afterEach(() => {
 });
 
 describe("appearanceStorage", () => {
-  it("defaults to system preference and rose palette", () => {
+  it("defaults to system preference and amber palette", () => {
     expect(readStoredAppearance().preference).toBe("system");
+    expect(readStoredAppearance().palette).toBe(DEFAULT_PALETTE);
+  });
+
+  it("migrates the former implicit rose default to amber", () => {
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({ preference: "light", palette: "rose" }),
+    );
+
     expect(readStoredAppearance().palette).toBe(DEFAULT_PALETTE);
   });
 

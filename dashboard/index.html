@@ -11,12 +11,12 @@
     <!-- PWA: theme color (light / dark) -->
     <meta
       name="theme-color"
-      content="#ffffff"
+      content="#fffffe"
       media="(prefers-color-scheme: light)"
     />
     <meta
       name="theme-color"
-      content="#1a1c28"
+      content="#18180f"
       media="(prefers-color-scheme: dark)"
     />
     <!-- PWA: standalone mode for iOS Safari -->
@@ -66,11 +66,24 @@
           if (pref === "dark" || (pref === "system" && systemDark())) {
             mode = "dark";
           }
+          var palette = "amber";
+          if (raw) {
+            try {
+              var stored = JSON.parse(raw);
+              if (stored && typeof stored.palette === "string") {
+                palette = stored.palette === "rose" ? "amber" : stored.palette;
+              }
+            } catch (e) {
+              // Keep the new default palette for malformed legacy values.
+            }
+          }
+          document.documentElement.setAttribute("data-palette", palette);
         } catch (e) {
           if (systemDark()) mode = "dark";
+          document.documentElement.setAttribute("data-palette", "amber");
         }
         document.documentElement.setAttribute("data-theme", mode);
-        var themeColor = mode === "dark" ? "#1a1c28" : "#ffffff";
+        var themeColor = mode === "dark" ? "#18180f" : "#fffffe";
         var metas = document.querySelectorAll('meta[name="theme-color"]');
         for (var i = 0; i < metas.length; i++) {
           metas[i].setAttribute("content", themeColor);
@@ -87,7 +100,7 @@
       body {
         height: 100%;
         margin: 0;
-        background: #f7f8fa;
+        background: #f5f4ef;
       }
       #root {
         min-height: 100%;
@@ -109,17 +122,17 @@
           max(24px, env(safe-area-inset-bottom, 0px))
           max(24px, env(safe-area-inset-left, 0px));
         margin: 0;
-        background: #f7f8fa;
+        background: #f5f4ef;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
           "Noto Sans SC", sans-serif;
         color: #8b8fa3;
       }
       html[data-theme="dark"],
       html[data-theme="dark"] body {
-        background: #12141c;
+        background: #18180f;
       }
       html[data-theme="dark"] #mosswork-boot {
-        background: #12141c;
+        background: #18180f;
         color: rgba(255, 255, 255, 0.55);
       }
       #mosswork-boot-mark {
@@ -133,13 +146,13 @@
         position: absolute;
         inset: 0;
         border-radius: 50%;
-        border: 3px solid rgba(232, 93, 117, 0.18);
-        border-top-color: #e85d75;
+        border: 3px solid rgba(249, 115, 22, 0.18);
+        border-top-color: #f97316;
         animation: mosswork-boot-spin 0.85s linear infinite;
       }
       html[data-theme="dark"] #mosswork-boot-ring {
         border-color: rgba(240, 139, 154, 0.22);
-        border-top-color: #f08b9a;
+        border-top-color: #fb923c;
       }
       .mosswork-boot-logo {
         position: absolute;

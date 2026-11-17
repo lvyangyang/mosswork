@@ -32,9 +32,14 @@ function isPalette(value: unknown): value is ThemePalette {
   );
 }
 
+/** The former rose palette was the implicit default, not a user setting. */
+function migrateDefaultPalette(value: ThemePalette): ThemePalette {
+  return value === "rose" ? DEFAULT_PALETTE : value;
+}
+
 function readLegacyPalette(): ThemePalette {
   const stored = localStorage.getItem(LEGACY_PALETTE_STORAGE_KEY);
-  if (isPalette(stored)) return stored;
+  if (isPalette(stored)) return migrateDefaultPalette(stored);
   return DEFAULT_PALETTE;
 }
 
@@ -69,7 +74,7 @@ export function readStoredAppearance(): StoredAppearance {
         ? obj.preference
         : "system";
       const palette = isPalette(obj.palette)
-        ? obj.palette
+        ? migrateDefaultPalette(obj.palette)
         : readLegacyPalette();
       const customColor =
         normalizeHexColor(obj.customColor as string) ?? DEFAULT_CUSTOM_COLOR;
