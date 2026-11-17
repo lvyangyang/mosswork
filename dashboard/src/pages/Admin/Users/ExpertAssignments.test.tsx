@@ -336,7 +336,9 @@ it("does not offer to resubmit a committed assignment when refreshing the list f
     await screen.findByText("expertAccess.savedRefreshFailed"),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "employeeResources.saveSettings" }),
+    await screen.findByRole("button", {
+      name: "employeeResources.saveSettings",
+    }),
   ).toBeDisabled();
   expect(close).not.toHaveBeenCalled();
   await act(async () =>
