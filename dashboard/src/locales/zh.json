@@ -310,7 +310,7 @@
     "RESOURCE_RETAINED": "该资源及其历史需要保留，当前无法删除。"
   },
   "nav": {
-    "chat": "Agent",
+    "chat": "任务",
     "company": "公司",
     "common": "常用",
     "control": "控制",

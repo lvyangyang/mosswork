@@ -11,8 +11,20 @@ import {
 } from "../pages/Chat/hooks/useSessions";
 import { setThreadExecutionMode } from "../pages/Chat/hooks/chatStore";
 
-export function useAgentThreadChat(agentId: string | null) {
-  const [threadId, setThreadId] = useState<string | null>(null);
+export function useAgentThreadChat(
+  agentId: string | null,
+  freshKey: number | false = false,
+) {
+  const fresh = freshKey !== false;
+  const [binding, setBinding] = useState<{
+    agentId: string;
+    freshKey: number | false;
+    threadId: string;
+  } | null>(null);
+  const threadId =
+    binding?.agentId === agentId && binding?.freshKey === freshKey
+      ? binding.threadId
+      : null;
   const [booting, setBooting] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
 
@@ -21,7 +33,7 @@ export function useAgentThreadChat(agentId: string | null) {
 
   useEffect(() => {
     if (!agentId) {
-      setThreadId(null);
+      setBinding(null);
       setBootError(null);
       return;
     }
@@ -32,24 +44,24 @@ export function useAgentThreadChat(agentId: string | null) {
 
     void (async () => {
       try {
-        const rows = await mossworkThreadsApi.list(agentId);
+        const rows = fresh ? [] : await mossworkThreadsApi.list(agentId);
         const preferred = pickPreferredSession(rows.map(toSession));
         let tid = preferred?.threadId;
-        if (!tid) {
+        if (fresh || !tid) {
           const created = await mossworkThreadsApi.create(agentId);
           tid = created.thread_id;
           setThreadExecutionMode(tid, created.execution_mode);
         }
         await mossworkThreadsApi.rebind(agentId, tid);
         if (!cancelled) {
-          setThreadId(tid);
+          setBinding({ agentId, freshKey, threadId: tid });
         }
       } catch (err) {
         if (!cancelled) {
           setBootError(
             err instanceof Error ? err.message : "Failed to load chat thread",
           );
-          setThreadId(null);
+          setBinding(null);
         }
       } finally {
         if (!cancelled) {
@@ -61,7 +73,7 @@ export function useAgentThreadChat(agentId: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [agentId]);
+  }, [agentId, freshKey]);
 
   useEffect(() => {
     if (threadId && agentId) {
