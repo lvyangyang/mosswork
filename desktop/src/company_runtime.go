@@ -282,6 +282,14 @@ func (a *App) ensureRuntimeProcess(nonce, base, method string, prepare func() (s
 	a.companyMu.Unlock()
 	return process, nil
 }
+func applyRuntimeErrorTranslation(m companyruntime.Message) companyruntime.Message {
+	if m.Error != "" {
+		m.ErrorCode = m.Error
+		m.Error = runtimeErrorText(m.Error)
+	}
+	return m
+}
+
 func (a *App) deliverRuntimeEvent(nonce, base string, epoch uint64, m companyruntime.Message) {
 	a.companyMu.Lock()
 	defer a.companyMu.Unlock()
@@ -303,9 +311,7 @@ func (a *App) deliverRuntimeEvent(nonce, base string, epoch uint64, m companyrun
 			}
 		}
 	}
-	if m.Error != "" {
-		m.Error = runtimeErrorText(m.Error)
-	}
+	m = applyRuntimeErrorTranslation(m)
 	data, _ := json.Marshal(m)
 	a.window.ExecJS(`(function(origin,nonce,event){if(location.origin===origin)window.__mossworkRuntimeEvent?.(nonce,event);})(` + jsonString(a.companyPageOriginLocked()) + `,` + jsonString(nonce) + `,` + string(data) + `)`)
 }

@@ -17,21 +17,24 @@ import (
 )
 
 type Message struct {
-	ID         string          `json:"id,omitempty"`
-	Event      string          `json:"event,omitempty"`
-	ThreadID   string          `json:"thread_id,omitempty"`
-	TaskID     string          `json:"task_id,omitempty"`
-	Result     json.RawMessage `json:"result,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Data       json.RawMessage `json:"data,omitempty"`
-	Frame      json.RawMessage `json:"frame,omitempty"`
-	Status     string          `json:"status,omitempty"`
-	SyncState  string          `json:"sync_state,omitempty"`
-	PID        int             `json:"pid,omitempty"`
-	Stream     string          `json:"stream,omitempty"`
-	Content    string          `json:"content,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Artifacts  json.RawMessage `json:"artifacts,omitempty"`
+	ID          string          `json:"id,omitempty"`
+	Event       string          `json:"event,omitempty"`
+	ThreadID    string          `json:"thread_id,omitempty"`
+	TaskID      string          `json:"task_id,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+	Error       string          `json:"error,omitempty"`
+	Data        json.RawMessage `json:"data,omitempty"`
+	Frame       json.RawMessage `json:"frame,omitempty"`
+	Status      string          `json:"status,omitempty"`
+	Attempt     int             `json:"attempt,omitempty"`
+	MaxAttempts int             `json:"max_attempts,omitempty"`
+	SyncState   string          `json:"sync_state,omitempty"`
+	PID         int             `json:"pid,omitempty"`
+	Stream      string          `json:"stream,omitempty"`
+	Content     string          `json:"content,omitempty"`
+	ToolCallID  string          `json:"tool_call_id,omitempty"`
+	Artifacts   json.RawMessage `json:"artifacts,omitempty"`
+	ErrorCode   string          `json:"error_code,omitempty"`
 }
 type Process struct {
 	cmd       *exec.Cmd

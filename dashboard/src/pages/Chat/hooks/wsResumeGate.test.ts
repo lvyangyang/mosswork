@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_STREAM_RESUME_ATTEMPTS,
   STREAM_STALE_WITHOUT_SOCKET_MS,
+  LOCAL_STALL_WARN_MS,
   shouldBlockHistoryRefresh,
   shouldEmitStreamResumeNotice,
   shouldForceSealStream,
   shouldProbeActiveTurn,
   shouldResumeStreamAfterClose,
+  shouldWarnLocalStall,
 } from "./wsResumeGate";
 
 describe("shouldResumeStreamAfterClose", () => {
@@ -183,6 +185,29 @@ describe("shouldForceSealStream", () => {
         lastActivityAt: null,
         now,
         sessionFocused: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldWarnLocalStall", () => {
+  const now = 1_000_000;
+
+  it("warns only for a streaming local task after ten minutes", () => {
+    expect(
+      shouldWarnLocalStall({
+        isStreaming: true,
+        isLocalStream: true,
+        lastActivityAt: now - LOCAL_STALL_WARN_MS - 1,
+        now,
+      }),
+    ).toBe(true);
+    expect(
+      shouldWarnLocalStall({
+        isStreaming: true,
+        isLocalStream: false,
+        lastActivityAt: now - LOCAL_STALL_WARN_MS - 1,
+        now,
       }),
     ).toBe(false);
   });

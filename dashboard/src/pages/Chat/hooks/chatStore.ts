@@ -37,6 +37,7 @@ import { generateId } from "../../../utils/messageParser";
 import type {
   ChatAttachment,
   ChatMessage,
+  ModelStatus,
   SessionSnapshot,
   SessionStreamState,
 } from "./sseHelpers";
@@ -75,6 +76,7 @@ import {
   STREAM_STALE_WITHOUT_SOCKET_MS,
   shouldEmitStreamResumeNotice,
   shouldForceSealStream,
+  shouldWarnLocalStall,
   shouldResumeStreamAfterClose,
 } from "./wsResumeGate";
 
@@ -313,6 +315,7 @@ export function writeInputDraft(
 export type {
   ChatAttachment,
   ChatMessage,
+  ModelStatus,
   HitlActionRequest,
   HitlRequestData,
   SessionSnapshot,
@@ -325,6 +328,8 @@ export type {
 const EMPTY_SNAPSHOT: SessionSnapshot = Object.freeze({
   messages: [],
   isStreaming: false,
+  modelStatus: null,
+  streamStalled: false,
   thinkingStartedAt: null,
   runUsage: null,
   contextUsage: null,
@@ -487,6 +492,8 @@ function buildSnapshot(state: SessionStreamState): SessionSnapshot {
   return {
     messages: state.messages,
     isStreaming: state.isStreaming,
+    modelStatus: state.modelStatus,
+    streamStalled: state.streamStalled,
     localPreparing: state.localPreparing ?? false,
     thinkingStartedAt: state.thinkingStartedAt,
     runUsage: state.runUsage,
@@ -562,6 +569,8 @@ function getOrCreate(sessionId: string): SessionStreamState {
     state = {
       messages: [],
       isStreaming: false,
+      modelStatus: null,
+      streamStalled: false,
       thinkingStartedAt: null,
       runUsage: null,
       contextUsage: null,
@@ -632,6 +641,8 @@ function beginStream(state: SessionStreamState, sessionId: string): void {
   clearAllLiveSpeakers(state);
   state.thinkingStartedAt = Date.now();
   state.isStreaming = true;
+  state.modelStatus = null;
+  state.streamStalled = false;
   touchStreamActivity(sessionId);
 }
 
@@ -642,6 +653,8 @@ function clearStreamingFlags(
   // Do not clear liveSpeakers — team members may keep generating after the
   // host turn unlocks the composer; process panels key off liveSpeakers.
   state.isStreaming = false;
+  state.modelStatus = null;
+  state.streamStalled = false;
   state.localPreparing = false;
   state.thinkingStartedAt = null;
   if (opts?.keepSteer) return;
@@ -723,6 +736,11 @@ function clearStreamWatchdog(sessionId: string): void {
 
 function touchStreamActivity(sessionId: string): void {
   streamActivityAt.set(sessionId, Date.now());
+  const state = sessionStates.get(sessionId);
+  if (state?.streamStalled) {
+    state.streamStalled = false;
+    notify(state);
+  }
   armStreamWatchdog(sessionId);
 }
 
@@ -743,6 +761,23 @@ function armStreamWatchdog(sessionId: string): void {
       streamWatchdogs.delete(sessionId);
       const state = sessionStates.get(sessionId);
       if (!state) return;
+      if (
+        shouldWarnLocalStall({
+          isStreaming: state.isStreaming,
+          isLocalStream: localStreams.has(sessionId),
+          lastActivityAt: streamActivityAt.get(sessionId) ?? null,
+          now: Date.now(),
+        })
+      ) {
+        if (!state.streamStalled) {
+          state.streamStalled = true;
+          notify(state);
+        }
+        if (state.isStreaming && isSessionFocused(sessionId)) {
+          armStreamWatchdog(sessionId);
+        }
+        return;
+      }
       if (
         !shouldForceSealStream({
           isStreaming: state.isStreaming,
@@ -2599,6 +2634,31 @@ function applyLocalProcessOutput(
   });
 }
 
+export function applyModelStatusEvent(
+  state: SessionStreamState,
+  event: RuntimeEvent,
+): boolean {
+  if (event.event === "model_status") {
+    if (event.status !== "retrying") return false;
+    const next: ModelStatus = {
+      attempt: event.attempt ?? 1,
+      maxAttempts: event.max_attempts ?? 3,
+      ...(event.error ? { error: event.error } : {}),
+    };
+    const changed =
+      state.modelStatus?.attempt !== next.attempt ||
+      state.modelStatus?.maxAttempts !== next.maxAttempts ||
+      state.modelStatus?.error !== next.error;
+    state.modelStatus = next;
+    return changed;
+  }
+  if (state.modelStatus !== null) {
+    state.modelStatus = null;
+    return true;
+  }
+  return false;
+}
+
 async function attachLocalRuntime(
   sessionId: string,
   threadId: string,
@@ -2647,6 +2707,8 @@ async function attachLocalRuntime(
   };
   const applyEvent = (event: RuntimeEvent) => {
     if (closed || !matchesRuntimeTask(event, threadId, taskId)) return;
+    touchStreamActivity(sessionId);
+    if (applyModelStatusEvent(state, event)) notify(state);
     if (event.event === "process_output") {
       applyLocalProcessOutput(state, event);
       notifyStream(state);
@@ -2658,7 +2720,11 @@ async function attachLocalRuntime(
     }
     if (event.event === "done") {
       if (event.error)
-        appendErrorBubble(state, event.error, "local_runtime_error");
+        appendErrorBubble(
+          state,
+          event.error,
+          event.error_code || "local_runtime_error",
+        );
       finish();
     }
   };
@@ -3520,6 +3586,7 @@ export async function sendTurn(
           if (state.abortController !== controller) return;
           markStarted();
           touchStreamActivity(sessionId);
+          if (applyModelStatusEvent(state, event)) notify(state);
           if (event.event === "process_output") {
             applyLocalProcessOutput(state, event);
             notifyStream(state);
@@ -3571,7 +3638,7 @@ export async function sendTurn(
       appendErrorBubble(
         state,
         error instanceof Error ? error.message : "本地任务失败，请检查运行时。",
-        "local_runtime_error",
+        (error as { errorCode?: string }).errorCode || "local_runtime_error",
       );
     } finally {
       if (localAttachmentImports.get(sessionId) === controller)

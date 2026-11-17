@@ -20,7 +20,6 @@ from typing import Any
 
 import httpx
 from deepagents.backends import CompositeBackend, FilesystemBackend
-from langchain.agents.middleware import ModelRetryMiddleware
 from langchain_core.messages import HumanMessage, messages_to_dict
 from langchain_core.tools import ToolException, tool
 from moss_harness import HarnessAgent, HarnessAgentConfig
@@ -48,6 +47,7 @@ from octop.infra.company_runtime.local import (
 )
 from octop.infra.company_runtime.memory_middleware import CompanyMemoryMiddleware
 from octop.infra.company_runtime.model_context import company_model_profile
+from octop.infra.company_runtime.model_retry import EmittingModelRetryMiddleware
 from octop.infra.company_runtime.steer import CompanySteering
 from octop.infra.company_runtime.ui_stream import project_ui_chunk
 from octop.infra.gateway.process.message_keys import INBOUND_ATTACHMENTS_KEY
@@ -67,6 +67,7 @@ class CompanyModelFactory(ChatModelFactory):
         *,
         model_profiles: dict[str, Any] | None = None,
         runtime_settings: dict[str, Any] | None = None,
+        progress: Any = None,
     ) -> None:
         providers: dict[str, ProviderConfig] = {}
         self.profiles = {
@@ -89,7 +90,7 @@ class CompanyModelFactory(ChatModelFactory):
                 )
             )
         super().__init__(list(providers.values()))
-        self.client, self.task_id = client, task_id
+        self.client, self.task_id, self.progress = client, task_id, progress
 
     def get_chat_model(self, model_ref: str, *, max_retries: int | None = None) -> Any:
         if model_ref not in self.list_refs():
@@ -98,6 +99,7 @@ class CompanyModelFactory(ChatModelFactory):
             client=self.client,
             task_id=self.task_id,
             model_ref=model_ref,
+            progress=self.progress,
         )
         # Match harness profile injection, including its context_window extension.
         object.__setattr__(instance, "profile", self.profiles[model_ref].copy())
@@ -796,6 +798,9 @@ class EnterpriseRuntime:
                 snapshot["models"],
                 model_profiles=snapshot.get("model_profiles"),
                 runtime_settings=snapshot.get("runtime_settings"),
+                progress=lambda payload: self.emit(
+                    {"event": "model_status", "thread_id": thread, **payload}
+                ),
             )
             config = HarnessAgentConfig(
                 name=snapshot["name"],
@@ -857,12 +862,22 @@ class EnterpriseRuntime:
                     CompanyCapabilitiesMiddleware(capabilities=snapshot.get("capabilities", {})),
                     CompanyToolGuard(self.steering.approvals, thread, self.emit),
                     CompanyMemoryMiddleware(client, task_id),
-                    ModelRetryMiddleware(
+                    EmittingModelRetryMiddleware(
                         max_retries=3,
                         initial_delay=1.0,
                         max_delay=10.0,
                         retry_on=lambda exc: isinstance(exc, CompanyModelError) and exc.retryable,
                         on_failure="error",
+                        on_retry=lambda exc, attempt, max_attempts: self.emit(
+                            {
+                                "event": "model_status",
+                                "thread_id": thread,
+                                "status": "retrying",
+                                "attempt": attempt,
+                                "max_attempts": max_attempts,
+                                "error": str(exc),
+                            }
+                        ),
                     ),
                     ReceiptMiddleware(
                         OperationJournal(self.state / "threads" / thread / "operations"),
