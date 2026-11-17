@@ -36,7 +36,6 @@ class OpenAIImageProvider(BearerJsonMediaProvider):
             "model": self.image_model,
             "prompt": request.prompt,
             "n": request.count,
-            "response_format": "url",
         }
         if request.size:
             body["size"] = {"1K": "1024x1024", "2K": "2048x2048", "4K": "3840x2160"}.get(
@@ -45,7 +44,6 @@ class OpenAIImageProvider(BearerJsonMediaProvider):
         if request.reference_images:
             # GPT image edits use multipart originals and may return base64.
             # Do not silently fall back to text generation if editing fails.
-            body.pop("response_format")
             payload = await self._request_edit(client, body, request.reference_images)
         else:
             payload = await self._request_json(client, "POST", "/images/generations", json=body)
@@ -56,18 +54,55 @@ class OpenAIImageProvider(BearerJsonMediaProvider):
             if not isinstance(row, Mapping):
                 continue
             if row.get("b64_json"):
-                try:
-                    data = base64.b64decode(row["b64_json"], validate=True)
-                except (ValueError, TypeError) as exc:
-                    raise MediaGenerationError("Image provider returned invalid base64") from exc
-                artifacts.append(RemoteArtifact(data=data, media_type="image/png", extension="png"))
-            elif row.get("url"):
-                artifacts.append(
-                    RemoteArtifact(url=row["url"], media_type="image/png", extension="png")
-                )
+                artifacts.append(self._inline_artifact(row["b64_json"], "image/png", "png"))
+            elif isinstance(row.get("url"), str) and row["url"]:
+                url = row["url"]
+                if url.startswith("data:"):
+                    artifacts.append(self._data_uri_artifact(url))
+                    continue
+                artifacts.append(RemoteArtifact(url=url, media_type="image/png", extension="png"))
         if not artifacts:
             raise MediaGenerationError("Image provider returned no usable images")
         return MediaSubmission(artifacts=tuple(artifacts))
+
+    @staticmethod
+    def _inline_artifact(value: object, media_type: str, extension: str) -> RemoteArtifact:
+        if not isinstance(value, str):
+            raise MediaGenerationError("Image provider returned invalid base64")
+        try:
+            data = base64.b64decode(value, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise MediaGenerationError("Image provider returned invalid base64") from exc
+        return OpenAIImageProvider._data_artifact(data, media_type, extension)
+
+    @staticmethod
+    def _data_artifact(data: bytes, media_type: str, extension: str) -> RemoteArtifact:
+        if not data:
+            raise MediaGenerationError("Image provider returned an empty image")
+        detected_type, detected_extension = detect_media(
+            data, fallback_type=media_type, fallback_extension=extension
+        )
+        if not detected_type or not detected_extension:
+            raise MediaGenerationError("Image provider returned an unsupported image format")
+        return RemoteArtifact(data=data, media_type=detected_type, extension=detected_extension)
+
+    @classmethod
+    def _data_uri_artifact(cls, value: str) -> RemoteArtifact:
+        header, separator, encoded = value.partition(",")
+        parts = header[5:].split(";") if header.startswith("data:") else []
+        media_type = parts[0].lower() if parts else ""
+        if (
+            not separator
+            or media_type not in {"image/png", "image/jpeg", "image/gif", "image/webp"}
+            or not parts
+            or parts[-1].lower() != "base64"
+        ):
+            raise MediaGenerationError("Image provider returned an invalid image data URI")
+        try:
+            data = base64.b64decode("".join(encoded.split()), validate=True)
+        except (ValueError, TypeError) as exc:
+            raise MediaGenerationError("Image provider returned invalid image data") from exc
+        return cls._data_artifact(data, "", "")
 
     async def _request_edit(
         self, client: httpx.AsyncClient, body: dict[str, Any], references: tuple[str, ...]
