@@ -35,6 +35,44 @@ function makeScroller({
   return el;
 }
 
+function makeScrollbarScroller(side: "left" | "right", overlay = false) {
+  const container = makeScroller({ scrollTop: 800 });
+  Object.defineProperties(container, {
+    offsetWidth: { value: 306 },
+    clientWidth: { value: overlay ? 306 : 300 },
+    clientLeft: { value: !overlay && side === "left" ? 6 : 0 },
+  });
+  vi.spyOn(container, "getBoundingClientRect").mockReturnValue({
+    left: 100,
+    right: 406,
+    top: 0,
+    bottom: 200,
+    width: 306,
+    height: 200,
+    x: 100,
+    y: 0,
+    toJSON: () => ({}),
+  });
+  if (overlay) {
+    vi.spyOn(window, "getComputedStyle").mockReturnValue({
+      width: "6px",
+      direction: side === "left" ? "rtl" : "ltr",
+    } as CSSStyleDeclaration);
+  }
+  return container;
+}
+
+function pointer(target: EventTarget, type: string, clientX = 0) {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    clientX,
+    clientY: 100,
+    button: 0,
+  });
+  Object.defineProperty(event, "pointerId", { value: 1 });
+  target.dispatchEvent(event);
+}
+
 /**
  * Replace the no-op ResizeObserver stub (from src/test/setup.ts) with one we
  * can fire manually, mirroring the real browser delivering RO callbacks after
@@ -147,6 +185,36 @@ describe("useAutoScroll", () => {
     rerender({ token: 2 });
 
     expect(endRef.current.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("follows late virtual content measurements only in follow mode", () => {
+    let frame: FrameRequestCallback | undefined;
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        frame = callback;
+        return 1;
+      });
+    const container = makeScroller({ scrollTop: 800 });
+    const containerRef = { current: container };
+    const { result } = renderHook(() => useAutoScroll({ containerRef }));
+    Object.defineProperty(container, "scrollHeight", {
+      value: 1400,
+      configurable: true,
+    });
+    act(() => result.current.handleContentHeightChange());
+    expect(container.scrollTop).toBe(800);
+    act(() => frame?.(0));
+    expect(container.scrollTop).toBe(1200);
+
+    act(() => pointer(container, "pointerdown", 403));
+    act(() => {
+      container.dispatchEvent(new WheelEvent("wheel", { deltaY: -40 }));
+    });
+    raf.mockClear();
+    act(() => result.current.handleContentHeightChange());
+    expect(raf).not.toHaveBeenCalled();
+    expect(result.current.isFollowMode).toBe(false);
   });
 
   it("resumes follow mode when scrollToBottom is called", () => {
@@ -456,7 +524,7 @@ describe("useAutoScroll", () => {
 
   it("does not leave follow mode on scroll-up noise under programmatic pin", () => {
     // Virtuoso/layout often emits scrollTop dips right after a pin. Those must
-    // not steal follow mode — only wheel/touch may interrupt during the guard.
+    // not steal follow mode without explicit user input during the guard.
     vi.useFakeTimers();
     const container = makeScroller({
       scrollHeight: 1000,
@@ -509,6 +577,107 @@ describe("useAutoScroll", () => {
     expect(result.current.isFollowMode).toBe(false);
     expect(result.current.showScrollBtn).toBe(true);
     vi.useRealTimers();
+  });
+
+  it.each([
+    ["right", false],
+    ["left", false],
+    ["right", true],
+    ["left", true],
+  ] as const)(
+    "keeps reading through a %s scrollbar drag (overlay=%s) during streaming",
+    (side, overlay) => {
+      vi.useFakeTimers();
+      const container = makeScrollbarScroller(side, overlay);
+      const containerRef = { current: container };
+      const { result, rerender } = renderHook(
+        ({ token }) =>
+          useAutoScroll({
+            containerRef,
+            deps: [token],
+          }),
+        { initialProps: { token: 1 } },
+      );
+
+      // Native scrollbar interaction emits pointer/scroll events, not wheel/touch.
+      // A token arrives while holding the thumb, inside the programmatic guard.
+      act(() => pointer(container, "pointerdown", side === "left" ? 103 : 403));
+      rerender({ token: 2 });
+      act(() => {
+        container.scrollTop = 400;
+        container.dispatchEvent(new Event("scroll"));
+        pointer(window, "pointerup");
+      });
+      rerender({ token: 3 });
+
+      expect(container.scrollTop).toBe(400);
+      expect(result.current.isFollowMode).toBe(false);
+      expect(result.current.showScrollBtn).toBe(true);
+    },
+  );
+
+  it("keeps following when clicking content or releasing the scrollbar without moving", () => {
+    const container = makeScrollbarScroller("right");
+    const containerRef = { current: container };
+    const { result } = renderHook(() => useAutoScroll({ containerRef }));
+    act(() => pointer(container, "pointerdown", 250));
+    expect(result.current.isFollowMode).toBe(true);
+    act(() => pointer(container, "pointerdown", 403));
+    act(() => pointer(window, "pointerup"));
+    expect(result.current.isFollowMode).toBe(true);
+    expect(result.current.showScrollBtn).toBe(false);
+  });
+
+  it("restores follow when listeners refresh during a held scrollbar gesture", () => {
+    const container = makeScrollbarScroller("right");
+    const containerRef = { current: container };
+    const { result, rerender } = renderHook(
+      ({ isAtTop }) => useAutoScroll({ containerRef, isAtTop }),
+      { initialProps: { isAtTop: () => false } },
+    );
+    act(() => pointer(container, "pointerdown", 403));
+    expect(result.current.isFollowMode).toBe(false);
+    // Virtual history can refresh callbacks while the pointer is still held.
+    rerender({ isAtTop: () => false });
+    act(() => pointer(window, "pointerup"));
+    expect(result.current.isFollowMode).toBe(true);
+    expect(result.current.showScrollBtn).toBe(false);
+  });
+
+  it.each(["scroll", "resize"])(
+    "keeps follow paused while the scrollbar is held through a %s event",
+    (event) => {
+      const observers = installCallableResizeObserver();
+      const container = makeScrollbarScroller("right");
+      const containerRef = { current: container };
+      const { result } = renderHook(() => useAutoScroll({ containerRef }));
+      act(() => pointer(container, "pointerdown", 403));
+      act(() => {
+        if (event === "scroll") container.dispatchEvent(new Event("scroll"));
+        else observers[0].emit();
+      });
+      expect(result.current.isFollowMode).toBe(false);
+      expect(result.current.showScrollBtn).toBe(true);
+      act(() => pointer(window, "pointerup"));
+      expect(result.current.isFollowMode).toBe(true);
+    },
+  );
+
+  it("does not apply an old scrollbar release to a replacement scroller", () => {
+    const container = makeScrollbarScroller("right");
+    const containerRef = { current: container };
+    const { result, rerender } = renderHook(
+      ({ scrollerMountKey }) =>
+        useAutoScroll({ containerRef, scrollerMountKey }),
+      { initialProps: { scrollerMountKey: 0 } },
+    );
+    act(() => pointer(container, "pointerdown", 403));
+    expect(result.current.isFollowMode).toBe(false);
+    containerRef.current = makeScrollbarScroller("right");
+    rerender({ scrollerMountKey: 1 });
+    act(() => pointer(window, "pointerup"));
+    expect(result.current.isFollowMode).toBe(false);
+    expect(result.current.showScrollBtn).toBe(true);
   });
 
   it("pins on deps change in layout without waiting for rAF", () => {

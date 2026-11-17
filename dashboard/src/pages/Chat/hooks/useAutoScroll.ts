@@ -98,6 +98,8 @@ export interface UseAutoScrollReturn {
   resumeAutoScroll: () => void;
   armProgrammaticGuard: (ms?: number) => void;
   handleAtBottomChange: (bottom: boolean) => void;
+  /** Follow an existing virtualizer measurement after its layout settles. */
+  handleContentHeightChange: () => void;
 }
 
 // ─── hook ─────────────────────────────────────────────────────────────────────
@@ -132,6 +134,10 @@ export function useAutoScroll({
   /** True while the user is wheel/touch-scrolling past the bottom (refresh). */
   const bottomOverscrollIntentRef = useRef(false);
   const prevScrollTopRef = useRef(0);
+  const scrollbarGestureRef = useRef<{
+    pointerId: number;
+    scroller: HTMLElement;
+  } | null>(null);
 
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const [isFollowMode, setIsFollowMode] = useState(true);
@@ -172,6 +178,8 @@ export function useAutoScroll({
   );
 
   const enterFollowMode = useCallback(() => {
+    // Native scroll/layout events can settle at the bottom before thumb release.
+    if (scrollbarGestureRef.current) return;
     scrollModeRef.current = "follow";
     setIsFollowMode(true);
     setShowScrollBtn(false);
@@ -277,6 +285,7 @@ export function useAutoScroll({
 
   const scrollToBottom = useCallback(
     (instant = false, sync = false) => {
+      scrollbarGestureRef.current = null;
       enterFollowMode();
       scrollToBottomInFollowMode(instant, sync);
     },
@@ -291,6 +300,12 @@ export function useAutoScroll({
     // Virtuoso may report at-bottom after programmatic follow scrolls.
     // Resuming follow is handled only by user scroll/wheel/touch listeners.
   }, []);
+
+  const handleContentHeightChange = useCallback(() => {
+    // Virtuoso's fixed viewport hides inner growth from ResizeObserver.
+    // Reuse its measurement and the existing coalesced pin after DOM layout.
+    scrollToBottomInFollowMode(true);
+  }, [scrollToBottomInFollowMode]);
 
   // Layout-phase follow: pin before paint so growing bubbles never sit below
   // the fold for a frame. One trailing rAF re-pins after Virtuoso/tool measure.
@@ -315,6 +330,9 @@ export function useAutoScroll({
 
   useEffect(() => {
     const container = getScroller();
+    if (scrollbarGestureRef.current?.scroller !== container) {
+      scrollbarGestureRef.current = null;
+    }
     if (!container) return;
 
     prevScrollTopRef.current = container.scrollTop;
@@ -374,7 +392,7 @@ export function useAutoScroll({
 
       // Under the programmatic pin guard, ignore scrollTop dips — Virtuoso and
       // layout often emit them right after pinScrollerToBottom. User intent to
-      // leave follow is handled by wheel/touch (which clear the guard).
+      // leave follow is handled by wheel/touch/scrollbar input (which clear it).
       if (
         !isProgrammaticRef.current &&
         !bottomPullNoise &&
@@ -443,6 +461,58 @@ export function useAutoScroll({
         return;
       }
       if (isProgrammaticRef.current) return;
+    };
+
+    const handlePointerDown = (e: PointerEvent): void => {
+      if (
+        e.button !== 0 ||
+        e.target !== container ||
+        container.scrollHeight <= container.clientHeight
+      ) {
+        return;
+      }
+      const rect = container.getBoundingClientRect();
+      if (
+        e.clientX < rect.left ||
+        e.clientX >= rect.right ||
+        e.clientY < rect.top ||
+        e.clientY >= rect.bottom
+      ) {
+        return;
+      }
+      const contentLeft = rect.left + container.clientLeft;
+      let onScrollbar =
+        e.clientX < contentLeft ||
+        e.clientX >= contentLeft + container.clientWidth;
+      if (container.offsetWidth === container.clientWidth) {
+        // Overlay scrollbars occupy the CSS scrollbar width without a gutter.
+        const width = Number.parseFloat(
+          getComputedStyle(container, "::-webkit-scrollbar").width,
+        );
+        onScrollbar =
+          getComputedStyle(container).direction === "rtl"
+            ? e.clientX < rect.left + width
+            : e.clientX >= rect.right - width;
+      }
+      if (!onScrollbar) return;
+      scrollbarGestureRef.current = {
+        pointerId: e.pointerId,
+        scroller: container,
+      };
+      resetOverscroll();
+      // Cancel queued pins before the thumb moves or another token arrives.
+      enterFreeMode();
+    };
+    const handlePointerEnd = (e: PointerEvent): void => {
+      const gesture = scrollbarGestureRef.current;
+      if (!gesture || e.pointerId !== gesture.pointerId) return;
+      scrollbarGestureRef.current = null;
+      if (
+        gesture.scroller === getScroller() &&
+        isAtBottom(FOLLOW_RESUME_THRESHOLD)
+      ) {
+        enterFollowMode();
+      }
     };
 
     let touchStartY = 0;
@@ -523,6 +593,11 @@ export function useAutoScroll({
 
     container.addEventListener("scroll", handleScroll, { passive: true });
     container.addEventListener("wheel", handleWheel, { passive: true });
+    container.addEventListener("pointerdown", handlePointerDown, {
+      passive: true,
+    });
+    window.addEventListener("pointerup", handlePointerEnd, true);
+    window.addEventListener("pointercancel", handlePointerEnd, true);
     container.addEventListener("touchstart", handleTouchStart, {
       passive: true,
     });
@@ -534,6 +609,9 @@ export function useAutoScroll({
       ro.disconnect();
       container.removeEventListener("scroll", handleScroll);
       container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("pointerup", handlePointerEnd, true);
+      window.removeEventListener("pointercancel", handlePointerEnd, true);
       container.removeEventListener("touchstart", handleTouchStart);
       container.removeEventListener("touchmove", handleTouchMove);
       container.removeEventListener("touchend", handleTouchEnd);
@@ -563,5 +641,6 @@ export function useAutoScroll({
     resumeAutoScroll,
     armProgrammaticGuard,
     handleAtBottomChange,
+    handleContentHeightChange,
   };
 }

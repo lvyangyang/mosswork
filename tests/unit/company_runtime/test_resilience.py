@@ -30,7 +30,7 @@ def runtime_for(client, tmp_path):
     return runtime, events
 
 
-async def run_turn(runtime, **options):
+async def run_turn(runtime, *, completion_timeout=15, **options):
     await runtime.start(
         {
             "task_id": "task1",
@@ -40,7 +40,41 @@ async def run_turn(runtime, **options):
             **options,
         }
     )
-    await asyncio.wait_for(runtime.work["thread1"], 15)
+    worker = runtime.work["thread1"]
+    try:
+        await asyncio.wait_for(asyncio.shield(worker), completion_timeout)
+    finally:
+        if not worker.done():
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_turn_watchdog_is_not_swallowed_as_business_cancellation():
+    entered, stopped = asyncio.Event(), asyncio.Event()
+
+    async def finish_on_cancel():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            stopped.set()
+
+    class Runtime:
+        async def start(self, _request):
+            self.work = {"thread1": asyncio.create_task(finish_on_cancel())}
+            await entered.wait()
+
+    runtime = Runtime()
+    try:
+        with pytest.raises(TimeoutError):
+            await run_turn(runtime, completion_timeout=0)
+        assert stopped.is_set()
+        assert runtime.work["thread1"].done()
+        assert not runtime.work["thread1"].cancelled()
+    finally:
+        runtime.work["thread1"].cancel()
+        await asyncio.gather(runtime.work["thread1"], return_exceptions=True)
 
 
 @pytest.mark.asyncio

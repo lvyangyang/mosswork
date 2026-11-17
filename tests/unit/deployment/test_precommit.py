@@ -335,6 +335,39 @@ def test_unstaged_and_mixed_inputs_cannot_reuse_tool_proof(actual_tool_history):
     assert len(executions()) == 6
 
 
+@pytest.mark.parametrize("kind", ["untracked-report", "unstaged-tool"])
+def test_tool_fallback_names_index_blockers_and_preserves_fresh_checks(actual_tool_history, kind):
+    root, candidate, _, fixture_git, run, history, executions = actual_tool_history
+    assert run().returncode == 0
+    original = Path(history()["attempt"])
+    original_bytes = original.read_bytes()
+    fixture_git("add", "--", str(candidate.relative_to(root)))
+    name = "unintended-report.xml" if kind == "untracked-report" else "tools/check_public_source.py"
+    blocker = root / name
+    previous = blocker.read_bytes() if blocker.exists() else None
+    blocker.write_bytes((previous or b"") + b"\n# synthetic-private-report-content\n")
+
+    refused_reuse = run(staged=True)
+    assert refused_reuse.returncode == 0, refused_reuse.stdout + refused_reuse.stderr
+    assert executions() == ["ran", "ran"]
+    assert history()["reuse_allowed"] is False and not history().get("reused")
+    output = refused_reuse.stdout + refused_reuse.stderr
+    assert "TOOLS_GATE_INPUTS:" in output
+    assert name in output
+    assert "synthetic-private-report-content" not in output
+    assert "generated reports outside the checkout" in output
+    assert original.read_bytes() == original_bytes
+
+    if previous is None:
+        blocker.unlink()
+    else:
+        blocker.write_bytes(previous)
+    assert run(staged=True).returncode == 0
+    assert executions() == ["ran", "ran", "ran"] and not history().get("reused")
+    assert run(staged=True).returncode == 0
+    assert executions() == ["ran", "ran", "ran"] and history().get("reused")
+
+
 def git(root: Path, *argv: str) -> str:
     return subprocess.check_output(["git", *argv], cwd=root, text=True, encoding="utf-8").strip()
 

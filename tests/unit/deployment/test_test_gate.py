@@ -844,6 +844,76 @@ def test_posix_git_launch_keeps_interpreter_and_custom_path_entries(
     assert os.environ["PATH"].split(os.pathsep) == [interpreter, git_exec, interpreter, *custom]
 
 
+@pytest.fixture
+def apple_git_manpath(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    developer = tmp_path / "Developer"
+    git_exec = developer / "usr/libexec/git-core"
+    git_exec.mkdir(parents=True)
+    monkeypatch.setenv("GIT_EXEC_PATH", str(git_exec))
+    return [
+        str(developer / "SDKs/MacOSX.sdk/usr/share/man"),
+        str(developer / "usr/share/man"),
+        str(developer / "Toolchains/XcodeDefault.xctoolchain/usr/share/man"),
+    ]
+
+
+@pytest.mark.parametrize("repetitions", [1, 2, 3])
+def test_apple_git_launch_keeps_one_leading_manpath_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    apple_git_manpath: list[str],
+    repetitions: int,
+) -> None:
+    block = apple_git_manpath
+    # A later repeated block belongs to the user's search order; retain it and
+    # the empty entry that asks man to include its default search directories.
+    tail = [str(tmp_path / "custom-man"), *block, ""]
+    monkeypatch.setattr(gate.sys, "platform", "darwin")
+    monkeypatch.setenv("MANPATH", os.pathsep.join(block * repetitions + tail))
+    gate.normalize_launch_environment()
+    assert os.environ["MANPATH"].split(os.pathsep) == block + tail
+    original = gate.environment_variables()["MANPATH"]
+    gate.normalize_launch_environment()
+    assert gate.environment_variables()["MANPATH"] == original
+    monkeypatch.setenv("MANPATH", os.pathsep.join(block + ["different-man", *tail]))
+    gate.normalize_launch_environment()
+    assert gate.environment_variables()["MANPATH"] != original
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+@pytest.mark.parametrize("custom_first", [False, True])
+def test_git_launch_preserves_manpath_outside_the_apple_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    apple_git_manpath: list[str],
+    platform: str,
+    custom_first: bool,
+) -> None:
+    block = apple_git_manpath
+    entries = ["custom-man", *block, *block] if custom_first else [block[0], "custom-man", *block]
+    original = os.pathsep.join(entries)
+    monkeypatch.setattr(gate.sys, "platform", platform)
+    monkeypatch.setenv("MANPATH", original)
+    gate.normalize_launch_environment()
+    assert os.environ["MANPATH"] == original
+    monkeypatch.delenv("MANPATH")
+    gate.normalize_launch_environment()
+    assert "MANPATH" not in os.environ
+
+
+def test_non_apple_git_launch_preserves_repeated_manpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, apple_git_manpath: list[str]
+) -> None:
+    original = os.pathsep.join(apple_git_manpath * 2 + [""])
+    monkeypatch.setenv("MANPATH", original)
+    monkeypatch.setattr(gate.sys, "platform", "linux")
+    gate.normalize_launch_environment()
+    assert os.environ["MANPATH"] == original
+    monkeypatch.setattr(gate.sys, "platform", "darwin")
+    monkeypatch.setenv("GIT_EXEC_PATH", str(tmp_path / "other-git"))
+    gate.normalize_launch_environment()
+    assert os.environ["MANPATH"] == original
+
+
 @pytest.mark.parametrize("runtime", ["mingw64", "ucrt64"])
 def test_windows_git_launch_uses_the_actual_runtime_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime: str
