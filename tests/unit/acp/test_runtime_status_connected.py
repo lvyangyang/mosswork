@@ -202,6 +202,20 @@ async def test_actual_connections_remain_distinct_and_queryable_during_quiet_wor
             assert initial.instance_id != other.instance_id
             assert initial.session_id != other.session_id
             assert initial.is_complete is False
+            execution, attention = (
+                await service.get_agent_observations(thread_id="first", runners=["native-fixture"])
+            )["native-fixture"]
+            if os.environ.get("MOSSWORK_ACP_ATTENTION_E2E") == "1":
+                assert first.attention.supported, "The candidate engine must advertise attention v1"
+            if first.attention.supported:
+                assert attention.availability == "fresh"
+                assert attention.snapshot.requests == ()
+            else:
+                # The pinned release predates attention; unsupported is not idle.
+                assert attention.availability == "unsupported"
+                assert attention.snapshot is None
+            assert attention.instance_id == execution.instance_id == initial.instance_id
+            assert attention.session_id == initial.session_id
 
             pending = asyncio.create_task(
                 first.conn.ext_method(
@@ -242,8 +256,8 @@ async def test_actual_connections_remain_distinct_and_queryable_during_quiet_wor
             (workspace / "hook-release").write_text("release", encoding="utf-8")
             await wait_for_file(workspace / "hook-finished")
             gate.with_suffix(".release").write_text("release", encoding="utf-8")
-            assert first.runtime_status_task is not None
-            stale = await first.runtime_status_task
+            assert first.runtime_status.task is not None
+            stale = await first.runtime_status.task
             assert stale["foreground"]["state"] == "running"
             result = await pending
             assert result["isError"] is False
@@ -258,6 +272,11 @@ async def test_actual_connections_remain_distinct_and_queryable_during_quiet_wor
             disconnected = await observation("first")
             assert disconnected.availability == "disconnected"
             assert disconnected.snapshot is None
+            gone = await service.get_attention_observation(
+                thread_id="first", runner="native-fixture"
+            )
+            assert gone.availability == "disconnected"
+            assert gone.snapshot is None
             assert (await observation("second")).instance_id == other.instance_id
             await connect("first")
             reopened = await observation("first")

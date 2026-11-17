@@ -179,7 +179,7 @@ async def _format_runner_list(config: ACPConfig, service_key: str) -> str:
         thread_id = ""
     service = _get_service(service_key, config) if thread_id else None
     observations = (
-        await service.get_runtime_observations(thread_id=thread_id, runners=runners) if service is not None else {}
+        await service.get_agent_observations(thread_id=thread_id, runners=runners) if service is not None else {}
     )
     lines = ["Available external ACP runners:"]
     for name in runners:
@@ -191,7 +191,8 @@ async def _format_runner_list(config: ACPConfig, service_key: str) -> str:
             pending = await service.get_pending_permission(thread_id=thread_id, runner=name)
             if pending is not None:
                 details.append("task: permission_required")
-            observation = observations[name]
+            observation, attention = observations[name]
+            details.append("attention: " + attention.model_dump_json(exclude_none=True))
             if observation.instance_id is not None:
                 details.append(_format_runtime_observation(observation))
         lines.append(f"- {name}" + (f" ({', '.join(details)})" if details else ""))
@@ -223,8 +224,10 @@ async def _format_status(config: ACPConfig, service_key: str, runner_name: str) 
     if session is not None and session.process.returncode is None:
         state = "waiting_for_permission" if pending is not None else "open"
     lines = [f"runner: {runner_name}", f"session: {state}"]
-    observation = await service.get_runtime_observation(thread_id=thread_id, runner=runner_name)
+    observations = await service.get_agent_observations(thread_id=thread_id, runners=[runner_name])
+    observation, attention = observations[runner_name]
     lines.append(_format_runtime_observation(observation))
+    lines.append("attention: " + attention.model_dump_json(exclude_none=True))
     if pending is not None:
         lines.append("")
         lines.append(format_permission_required(pending))
@@ -317,6 +320,8 @@ async def _run_streaming_action(
         return f"ACP execution error: {exc}"
 
     body = "\n\n".join(chunks).strip()
+    if result.get("status") == "permission_resolved":
+        return "Permission response submitted. Inspect status for the background agent's progress."
     if result.get("status") == "permission_required":
         suspended = result.get("suspended_permission")
         permission_text = format_permission_required(suspended) if suspended is not None else ""

@@ -12,7 +12,7 @@ import pytest
 from moss_harness.acp.client import ACPHostedClient
 from moss_harness.acp.models import ACPConfig, ACPRunnerConfig
 from moss_harness.acp.runtime_status import supports_runtime_status
-from moss_harness.acp.service import ACPService, _Conversation
+from moss_harness.acp.service import ACPService, ObservationQuery, _Conversation
 
 
 def snapshot(state: str = "idle", **foreground: str) -> dict[str, Any]:
@@ -39,7 +39,7 @@ def bind(service: ACPService, runner: str = "custom", *, supported: bool = True)
         client=ACPHostedClient(runner_name=runner, runner_config=config, cwd=""),
         exit_stack=AsyncExitStack(),
         turn_lock=asyncio.Lock(),
-        runtime_status_supported=supported,
+        runtime_status=ObservationQuery(supported=supported),
     )
     service._sessions[("thread", runner)] = conversation
     return conversation
@@ -198,9 +198,9 @@ async def test_batch_has_one_deadline_and_does_not_send_expired_queued_reads() -
     release.set()
     await asyncio.gather(
         *(
-            item.runtime_status_task
+            item.runtime_status.task
             for item in service._sessions.values()
-            if item.runtime_status_task is not None
+            if item.runtime_status.task is not None
         )
     )
     recovered = await service.get_runtime_observations(thread_id="thread", runners=runners)
@@ -230,8 +230,8 @@ async def test_caller_cancellation_is_not_converted_into_an_engine_fact() -> Non
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending
-        assert conversation.runtime_status_task is not None
-        assert not conversation.runtime_status_task.cancelled()
+        assert conversation.runtime_status.task is not None
+        assert not conversation.runtime_status.task.cancelled()
         other_reader = asyncio.create_task(
             service.get_runtime_observation(thread_id="thread", runner="custom")
         )
@@ -256,7 +256,10 @@ async def test_runner_list_and_status_use_the_same_scoped_engine_observation(
     listed = await runner_tool._format_runner_list(config, "agent")
     status = await runner_tool._format_status(config, "agent", "custom")
     listed_payload = json.loads(listed.split("runtime: ", 1)[1].rsplit(")", 1)[0])
-    status_payload = json.loads(status.split("runtime: ", 1)[1])
+    status_payload = json.loads(status.split("runtime: ", 1)[1].splitlines()[0])
+    attention_payload = json.loads(status.split("attention: ", 1)[1])
+    assert attention_payload["instance_id"] == status_payload["instance_id"]
+    assert attention_payload["availability"] == "unsupported"
     assert listed_payload == status_payload
     assert status_payload["snapshot"]["foreground"] == {
         "state": "awaiting_input",
@@ -292,8 +295,8 @@ async def test_closing_a_connection_releases_its_outstanding_status_request(
         with pytest.raises(asyncio.CancelledError):
             await reader
         await service.close_thread_session(thread_id="thread", runner="custom")
-    assert conversation.runtime_status_task is not None
-    assert conversation.runtime_status_task.cancelled()
+    assert conversation.runtime_status.task is not None
+    assert conversation.runtime_status.task.cancelled()
     assert closed == [42]
     observation = await service.get_runtime_observation(thread_id="thread", runner="custom")
     assert observation.availability == "disconnected"

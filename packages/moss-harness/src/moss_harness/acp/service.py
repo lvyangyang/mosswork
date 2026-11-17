@@ -9,16 +9,17 @@ import os
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 from uuid import uuid4
 
+from moss_harness.acp.attention import AttentionObservation, AttentionSnapshot
 from moss_harness.acp.client import ACPHostedClient
 from moss_harness.acp.models import ACPConfig, ACPConfigurationError, ACPRunnerConfig, ACPSessionError
 from moss_harness.acp.runtime_status import (
     RUNTIME_STATUS_BUDGET_SECONDS,
     RuntimeObservation,
     RuntimeSnapshot,
-    supports_runtime_status,
+    supports_engine_observation,
 )
 from moss_harness.backends.utils import ASYNC_DEFENSIVE_OP_ERRORS
 from moss_harness.runtime_env import load_dotenv_path, overlay_env
@@ -54,6 +55,13 @@ def _kill_process_tree(pid: int) -> None:
 
 
 @dataclass
+class ObservationQuery:
+    supported: bool = False
+    task: asyncio.Task[Any] | None = None
+    deadline: float = 0.0
+
+
+@dataclass
 class _Conversation:
     thread_id: str
     runner: str
@@ -65,9 +73,8 @@ class _Conversation:
     exit_stack: AsyncExitStack
     turn_lock: asyncio.Lock
     instance_id: str = field(default_factory=lambda: uuid4().hex)
-    runtime_status_supported: bool = False
-    runtime_status_task: asyncio.Task[Any] | None = None
-    runtime_status_deadline: float = 0.0
+    runtime_status: ObservationQuery = field(default_factory=ObservationQuery)
+    attention: ObservationQuery = field(default_factory=ObservationQuery)
     prompt_task: asyncio.Task[Any] | None = None
 
 
@@ -130,12 +137,13 @@ class ACPService:
             raise ACPSessionError(f"Session not found: {acp_session_id}")
         if conversation.client.pending_permission is None:
             raise ACPSessionError(f"Session {acp_session_id} has no pending permission request")
-        if conversation.prompt_task is None or conversation.prompt_task.done():
-            raise ACPSessionError(f"Session {acp_session_id} is not awaiting permission resume")
-
         async with conversation.turn_lock:
             conversation.client.resume_prompt(on_message)
             conversation.client.resolve_permission(option_id)
+            if conversation.prompt_task is None or conversation.prompt_task.done():
+                # Detached child requests belong to the session, not a parent
+                # prompt. A reply neither starts a turn nor declares the child done.
+                return {"status": "permission_resolved", "event": None}
             return await self._wait_for_prompt_outcome(conversation=conversation)
 
     async def close_thread_session(self, *, thread_id: str, runner: str) -> None:
@@ -165,68 +173,103 @@ class ACPService:
         """Read this connection's engine without acquiring its in-flight turn lock."""
         conversation = await self.get_session(thread_id, runner)
         deadline = asyncio.get_running_loop().time() + RUNTIME_STATUS_BUDGET_SECONDS
-        return await self._observe_runtime(conversation, deadline)
+        return cast(RuntimeObservation, await self._observe_engine(conversation, deadline))
+
+    async def get_attention_observation(self, *, thread_id: str, runner: str) -> AttentionObservation:
+        """Read the engine's request table without inferring it from model output."""
+        conversation = await self.get_session(thread_id, runner)
+        deadline = asyncio.get_running_loop().time() + RUNTIME_STATUS_BUDGET_SECONDS
+        return cast(AttentionObservation, await self._observe_engine(conversation, deadline, attention=True))
 
     async def get_runtime_observations(self, *, thread_id: str, runners: list[str]) -> dict[str, RuntimeObservation]:
         """Query existing connections with one deadline and four concurrent reads."""
+        values = await self._observe_many(thread_id, runners, (False,))
+        return {runner: cast(RuntimeObservation, value) for runner, value in zip(runners, values, strict=True)}
+
+    async def get_agent_observations(
+        self, *, thread_id: str, runners: list[str]
+    ) -> dict[str, tuple[RuntimeObservation, AttentionObservation]]:
+        """Execution and attention share one deadline and four wire reads."""
+        values = await self._observe_many(thread_id, runners, (False, True))
+        return {
+            runner: (cast(RuntimeObservation, values[index * 2]), cast(AttentionObservation, values[index * 2 + 1]))
+            for index, runner in enumerate(runners)
+        }
+
+    async def _observe_many(
+        self, thread_id: str, runners: list[str], kinds: tuple[bool, ...]
+    ) -> list[RuntimeObservation | AttentionObservation]:
         async with self._lock:
             conversations = [self._sessions.get((thread_id, runner)) for runner in runners]
         deadline = asyncio.get_running_loop().time() + RUNTIME_STATUS_BUDGET_SECONDS
         slots = asyncio.Semaphore(4)
 
-        async def observe(conversation: _Conversation | None) -> RuntimeObservation:
+        async def observe(
+            conversation: _Conversation | None, attention: bool
+        ) -> RuntimeObservation | AttentionObservation:
             async with slots:
-                return await self._observe_runtime(conversation, deadline)
+                return await self._observe_engine(conversation, deadline, attention=attention)
 
-        values = await asyncio.gather(*(observe(conversation) for conversation in conversations))
-        return dict(zip(runners, values, strict=True))
+        return await asyncio.gather(
+            *(observe(conversation, attention) for conversation in conversations for attention in kinds)
+        )
 
-    async def _observe_runtime(self, conversation: _Conversation | None, deadline: float) -> RuntimeObservation:
+    async def _observe_engine(
+        self, conversation: _Conversation | None, deadline: float, *, attention: bool = False
+    ) -> RuntimeObservation | AttentionObservation:
+        observation = AttentionObservation if attention else RuntimeObservation
+        snapshot_type = AttentionSnapshot if attention else RuntimeSnapshot
         if conversation is None:
-            return RuntimeObservation(availability="disconnected")
+            return observation(availability="disconnected")
         identity: _RuntimeIdentity = {
             "instance_id": conversation.instance_id,
             "session_id": conversation.acp_session_id,
         }
         if conversation.process.returncode is not None:
-            return RuntimeObservation(**identity, availability="disconnected")
-        if not conversation.runtime_status_supported:
-            return RuntimeObservation(**identity, availability="unsupported")
+            return observation(**identity, availability="disconnected")
+        query = conversation.attention if attention else conversation.runtime_status
+        if not query.supported:
+            return observation(**identity, availability="unsupported")
         if asyncio.get_running_loop().time() >= deadline:
-            return RuntimeObservation(**identity, availability="unavailable")
+            return observation(**identity, availability="unavailable")
 
         from acp import RequestError
 
-        task = conversation.runtime_status_task
+        task = query.task
         if task is None or task.done():
             # Keep one wire request per connection, including when the SDK
             # sender stalls. Readers leave at their deadline; the request
             # drains before another can be sent. Completed facts are not cached.
             task = asyncio.create_task(
-                conversation.conn.ext_method("sudocode/session/status", {"sessionId": conversation.acp_session_id})
+                conversation.conn.ext_method(
+                    "sudocode/session/attention" if attention else "sudocode/session/status",
+                    {"sessionId": conversation.acp_session_id},
+                )
             )
             task.add_done_callback(_finish_runtime_query)
-            conversation.runtime_status_task = task
-            conversation.runtime_status_deadline = asyncio.get_running_loop().time() + RUNTIME_STATUS_BUDGET_SECONDS
-        read_deadline = min(deadline, conversation.runtime_status_deadline)
+            query.task = task
+            query.deadline = asyncio.get_running_loop().time() + RUNTIME_STATUS_BUDGET_SECONDS
+        read_deadline = min(deadline, query.deadline)
         if asyncio.get_running_loop().time() >= read_deadline:
-            return RuntimeObservation(**identity, availability="unavailable")
+            return observation(**identity, availability="unavailable")
         try:
             async with asyncio.timeout_at(read_deadline):
                 # The SDK adds the extension's leading underscore itself.
                 payload = await asyncio.shield(task)
             if asyncio.get_running_loop().time() >= read_deadline:
-                return RuntimeObservation(**identity, availability="unavailable")
-            snapshot = RuntimeSnapshot.model_validate(payload)
+                return observation(**identity, availability="unavailable")
+            snapshot = snapshot_type.model_validate(payload)
         except (OSError, RuntimeError, ValueError, RequestError):
-            return RuntimeObservation(**identity, availability="unavailable")
+            return observation(**identity, availability="unavailable")
         current = await self.get_session(conversation.thread_id, conversation.runner)
         if (
             current is not conversation
             or conversation.acp_session_id != identity["session_id"]
             or conversation.process.returncode is not None
         ):
-            return RuntimeObservation(**identity, availability="disconnected")
+            return observation(**identity, availability="disconnected")
+        if isinstance(snapshot, AttentionSnapshot):
+            return AttentionObservation(**identity, availability="fresh", snapshot=snapshot)
         return RuntimeObservation(**identity, availability="fresh", snapshot=snapshot)
 
     async def cancel_turn(self, *, thread_id: str, runner: str) -> bool:
@@ -332,6 +375,7 @@ class ACPService:
             if initialized.protocol_version != PROTOCOL_VERSION:
                 raise ACPSessionError(f"Protocol mismatch: {initialized.protocol_version}")
             new_session = await conn.new_session(cwd=cwd)
+            client.bind_engine_session(new_session.session_id, initialized.field_meta)
             return _Conversation(
                 thread_id=thread_id,
                 runner=runner,
@@ -342,7 +386,10 @@ class ACPService:
                 client=client,
                 exit_stack=exit_stack,
                 turn_lock=asyncio.Lock(),
-                runtime_status_supported=supports_runtime_status(initialized.field_meta),
+                runtime_status=ObservationQuery(
+                    supported=supports_engine_observation(initialized.field_meta, "runtimeStatus")
+                ),
+                attention=ObservationQuery(supported=supports_engine_observation(initialized.field_meta, "attention")),
             )
         except ASYNC_DEFENSIVE_OP_ERRORS:
             await exit_stack.aclose()
@@ -410,12 +457,13 @@ class ACPService:
             try:
                 await conversation.exit_stack.aclose()
             finally:
-                task = conversation.runtime_status_task
-                if task is not None:
-                    if not task.done():
-                        task.cancel()
-                    with contextlib.suppress(Exception, asyncio.CancelledError):
-                        await task
+                conversation.client.invalidate_observations()
+                for query in (conversation.runtime_status, conversation.attention):
+                    if query.task is not None:
+                        if not query.task.done():
+                            query.task.cancel()
+                        with contextlib.suppress(Exception, asyncio.CancelledError):
+                            await query.task
 
     @staticmethod
     def _prompt_blocks_to_models(blocks: list[dict[str, Any]]) -> list[Any]:

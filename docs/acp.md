@@ -212,3 +212,37 @@ Runner shape:
 - CLI: `mosswork acp --help`
 - OpenAPI: `/api/docs`
 - Harness implementation: `moss-harness` → `moss_harness.acp` (server + `acp_runner` tool)
+
+## Engine attention
+
+SudoCode's optional `attention.version = 1` capability exposes the actual
+outstanding permission/question requests through `_sudocode/session/attention`
+and `_sudocode/session/attention_update`. The shared ACP adapter validates request
+IDs, revisions, phases (`queued`/`presented`) and runtime-provided child identity.
+It never infers attention from a spinner, an output gap or generated text.
+
+Runtime status and attention have independent availability. An unsupported,
+replaced or disconnected connection is not an empty request list. Runner status
+and list tools read both under one bounded deadline, without starting a model
+turn. The original native-host adapter forwards ordered, session-bound attention
+updates through its existing update sink; it does not gain approval or cleanup
+authority. In particular, the existing fail-closed native permission handler
+stays fail-closed until its authenticated product HITL adapter is installed.
+
+These facts are a read model. Responding still requires the original live
+permission/question request and the existing authenticated answer path. A peer
+advertising "awaiting input" does not imply that the current viewer can answer
+its request. Normal completion of a parent turn does not end its background
+child's pending approval; SudoCode owns that lifecycle.
+The delegated runner can answer an existing permission request after its parent
+prompt has finished. It reports that the response was submitted, without claiming
+the child completed or starting another model turn. Engine request removal clears
+the corresponding pending reply; it never selects an approval option implicitly.
+
+Native compatibility acceptance uses the engine pinned in
+`tests/support/acp_runtime_engine.json`, including its unsupported-attention path.
+To require the new attention capability from a candidate engine, run
+`tests/unit/acp/test_runtime_status_connected.py` with
+`MOSSWORK_ACP_RUNTIME_E2E=1 MOSSWORK_ACP_ATTENTION_E2E=1` and set `SCODE_BIN`
+to that engine's built executable. This additionally refuses an engine that
+does not advertise attention v1.
