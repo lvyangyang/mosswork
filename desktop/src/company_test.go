@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompanyBindingsRejectWindowlessCallers(t *testing.T) {
-	app := &App{company: company.NewClient()}
+	app := &App{company: company.NewClient(t.TempDir())}
 	ctx := context.Background()
 	if _, err := app.GetLoginConfig(ctx, "http://company.test"); err == nil {
 		t.Fatal("login config allowed without bundled main window")
@@ -79,9 +79,9 @@ func TestCompanyCompiledURLAndEnvironmentOverride(t *testing.T) {
 
 func TestCompanyServerSwitchPersistsAndReplacesDeviceClient(t *testing.T) {
 	t.Setenv("MOSSWORK_HOME", t.TempDir())
-	old := company.NewClient()
+	old := company.NewClient(t.TempDir())
 	app := &App{store: &settingsStore{cur: defaultSettings()}, company: old, companyURL: "https://old.company.test"}
-	next := company.NewClient()
+	next := company.NewClient(t.TempDir())
 	if err := app.selectCompany("https://new.company.test", next); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestCompanyServerSwitchPersistsAndReplacesDeviceClient(t *testing.T) {
 	if saved.CompanyURL != app.GetCompanyMode() || saved.ConnectionMode != "company" {
 		t.Fatal("server selection not persisted")
 	}
-	if err := app.selectCompany(saved.CompanyURL, company.NewClient()); err != nil || app.company != next {
+	if err := app.selectCompany(saved.CompanyURL, company.NewClient(t.TempDir())); err != nil || app.company != next {
 		t.Fatal("reopening the same server discarded the device")
 	}
 }
@@ -103,9 +103,9 @@ func TestCompanyServerSaveFailureLeavesCurrentConnection(t *testing.T) {
 	if err := os.WriteFile(root+"/blocked", []byte("file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	old := company.NewClient()
+	old := company.NewClient(t.TempDir())
 	app := &App{store: &settingsStore{cur: defaultSettings()}, company: old, companyURL: "https://old.company.test", bootID: 1}
-	if err := app.selectCompany("https://new.company.test", company.NewClient()); err == nil {
+	if err := app.selectCompany("https://new.company.test", company.NewClient(t.TempDir())); err == nil {
 		t.Fatal("unexpected successful write")
 	}
 	if app.company != old || app.GetCompanyMode() != "https://old.company.test" || app.bootID != 1 {
@@ -115,9 +115,9 @@ func TestCompanyServerSaveFailureLeavesCurrentConnection(t *testing.T) {
 
 func TestCompanyNewLoginReplacesDeviceEvenOnSameServer(t *testing.T) {
 	t.Setenv("MOSSWORK_HOME", t.TempDir())
-	old := company.NewClient()
+	old := company.NewClient(t.TempDir())
 	app := &App{store: &settingsStore{cur: defaultSettings()}, company: old, companyURL: "http://company.test"}
-	next := company.NewClient()
+	next := company.NewClient(t.TempDir())
 	if err := app.rememberCompany("http://company.test", next, true); err != nil {
 		t.Fatal(err)
 	}

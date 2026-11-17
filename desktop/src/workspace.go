@@ -182,7 +182,7 @@ func (a *App) performWorkspaceAction(nonce, base, action, code string) error {
 	if action == "disconnect" || action == "pair" {
 		a.stopCompanyRuntimeLocked()
 		client.Close(true)
-		client = company.NewClient()
+		client = a.newCompanyClient()
 		a.company = client
 		a.workspacePath, a.workspaceError, a.workspaceGrant = "", "", nil
 	}

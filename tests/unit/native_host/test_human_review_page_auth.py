@@ -132,11 +132,13 @@ async def test_real_cancel_in_final_grant_wait_stays_cancelled_despite_canonical
     persist(pages)
     original = HumanReviewReader.review
     entered = asyncio.Event()
+    domain_returned = asyncio.Event()
     state = {"returned": False}
 
     async def returned(self, request):
         result = await original(self, request)
         state["returned"] = True
+        domain_returned.set()
         return result
 
     async def grant(*args, **kwargs):
@@ -151,12 +153,23 @@ async def test_real_cancel_in_final_grant_wait_stays_cancelled_despite_canonical
         task = asyncio.create_task(
             read(pages, factory=provider(pages.human, require_review_access=grant))
         )
-        await asyncio.wait_for(entered.wait(), 5)
-        revoke(pages, 401)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert task.cancelled() and state["returned"] and len(calls) == 1
+        prepared = asyncio.create_task(domain_returned.wait())
+        try:
+            # Real SQL/HTTP preparation precedes the final-grant synchronization window.
+            done, _ = await asyncio.wait({task, prepared}, return_when=asyncio.FIRST_COMPLETED)
+            if task in done:
+                await task
+                pytest.fail("Page read returned before waiting for its final grant")
+            await asyncio.wait_for(entered.wait(), 5)
+            revoke(pages, 401)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(task), 5)
+            assert task.cancelled() and state["returned"] and len(calls) == 1
+        finally:
+            task.cancel()
+            prepared.cancel()
+            await asyncio.gather(task, prepared, return_exceptions=True)
 
 
 @pytest.mark.parametrize("status", [None, 401])

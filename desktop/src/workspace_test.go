@@ -12,7 +12,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"mosswork.desktop/internal/company"
 )
 
 func TestWorkspaceSettingsScopedToCompanyAndOwner(t *testing.T) {
@@ -133,7 +132,8 @@ func TestWorkspaceReconnectRestoresOnlyMatchingOwner(t *testing.T) {
 		code     string
 		restored bool
 	}{{"mosswork-pair.same", true}, {"mosswork-pair.other", false}} {
-		app := &App{company: company.NewClient(), companyURL: server.URL, workspaceNonce: "nonce"}
+		app := newApp(nil, t.TempDir())
+		app.companyURL, app.workspaceNonce = server.URL, "nonce"
 		if err := app.performWorkspaceAction("nonce", server.URL, "pair", tc.code); err != nil {
 			t.Fatal(err)
 		}
@@ -156,7 +156,8 @@ func TestWorkspaceReconnectRestoresOnlyMatchingOwner(t *testing.T) {
 	}
 	missing := filepath.Join(folder, "removed-folder")
 	_ = saveWorkspace(server.URL, 7, missing)
-	app := &App{company: company.NewClient(), companyURL: server.URL, workspaceNonce: "nonce"}
+	app := newApp(nil, t.TempDir())
+	app.companyURL, app.workspaceNonce = server.URL, "nonce"
 	if err := app.performWorkspaceAction("nonce", server.URL, "pair", "mosswork-pair.same"); err != nil {
 		t.Fatal(err)
 	}

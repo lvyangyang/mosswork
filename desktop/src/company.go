@@ -5,11 +5,31 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"mosswork.desktop/internal/company"
 )
+
+func defaultCompanyJournal() string {
+	// Keep the existing receipt location until a data migration is explicitly qualified.
+	dir, _ := os.UserConfigDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "mosswork", "company-operations")
+}
+
+func newApp(store *settingsStore, companyJournal string) *App {
+	a := &App{store: store, sleep: &sleepGuard{}, companyJournal: companyJournal}
+	a.company = a.newCompanyClient()
+	return a
+}
+
+func (a *App) newCompanyClient() *company.Client {
+	return company.NewClient(a.companyJournal)
+}
 
 func (a *App) GetCompanyMode() string {
 	a.companyMu.Lock()
@@ -25,7 +45,7 @@ func (a *App) ConfigureCompany(ctx context.Context, raw string) (string, error) 
 	if err := a.requireCompanyPanel(ctx); err != nil {
 		return "", err
 	}
-	client := company.NewClient()
+	client := a.newCompanyClient()
 	base, err := client.CheckServer(ctx, raw)
 	if err != nil {
 		return "", err
@@ -97,7 +117,7 @@ func (a *App) UseLocalMode(ctx context.Context) error {
 	}
 	a.workspaceNonce = ""
 	a.workspacePath, a.workspaceError, a.workspaceGrant = "", "", nil
-	a.company, a.companyURL = company.NewClient(), ""
+	a.company, a.companyURL = a.newCompanyClient(), ""
 	a.mu.Lock()
 	a.bootID++
 	if a.window != nil {
