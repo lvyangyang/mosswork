@@ -27,6 +27,8 @@ import { apiErrorMessage, isNotFoundApiError } from "../../../utils/apiError";
 import { isAgentChatReady } from "../../../utils/agentError";
 import { useAgentFormResources } from "../../../hooks/useAgentFormResources";
 import { mossworkAgentsApi } from "../../../api/modules/mossworkAgents";
+import { useAgentThreadChat } from "../../../hooks/useAgentThreadChat";
+import { extractText } from "../../Chat/hooks/useChat";
 import { useAgent, type MossworkAgent } from "../../../context/AgentContext";
 import {
   CONVERSATION_MODES,
@@ -173,8 +175,9 @@ interface EditAgentDrawerBodyProps {
   agent: MossworkAgent;
   onClose: () => void;
   onSaved: EditAgentDrawerProps["onSaved"];
-  onSaveReady: (save: () => Promise<void>) => void;
+  onSaveReady: (save: (keepOpen?: boolean) => Promise<void>) => void;
   onSavingChange: (saving: boolean) => void;
+  onTestSaved: () => void;
 }
 
 /**
@@ -225,6 +228,7 @@ function EditAgentDrawerBody({
   onSaved,
   onSaveReady,
   onSavingChange,
+  onTestSaved,
 }: EditAgentDrawerBodyProps) {
   const { t } = useTranslation();
   const { modal, message } = App.useApp();
@@ -388,150 +392,163 @@ function EditAgentDrawerBody({
     };
   }, [agent.agent_id, agent.state, form, message, t]);
 
-  const handleSave = useCallback(async () => {
-    const values = await form.validateFields();
-    if (values.backend_choice === "composite") {
-      const pathError = validatePathMappings(pathMappings, t);
-      if (pathError) {
-        message.error(pathError);
-        return;
+  const handleSave = useCallback(
+    async (keepOpen = false) => {
+      const values = await form.validateFields();
+      if (values.backend_choice === "composite") {
+        const pathError = validatePathMappings(pathMappings, t);
+        if (pathError) {
+          message.error(pathError);
+          return;
+        }
       }
-    }
-    if (shouldProbeRootDir(values.backend_choice, values.root_dir)) {
-      const probe = await probeRootDir(values.root_dir ?? "/");
-      if (!probe.ok) {
-        message.error(
-          `${rootDirProbeMessage(probe, t)}\n${t(
-            "experts.rootDirProbe.guidance",
-          )}`,
-        );
-        return;
-      }
-    }
-    setSaving(true);
-    let bwrapToast: { kind: "success" | "warning"; text: string } | null = null;
-    try {
       if (shouldProbeRootDir(values.backend_choice, values.root_dir)) {
-        const bwrap = await ensureBubblewrapAfterProbe();
-        const kind = ensureBwrapToastKind(bwrap.status);
-        if (kind !== "none") {
-          bwrapToast = { kind, text: ensureBwrapMessage(bwrap, t) };
+        const probe = await probeRootDir(values.root_dir ?? "/");
+        if (!probe.ok) {
+          message.error(
+            `${rootDirProbeMessage(probe, t)}\n${t(
+              "experts.rootDirProbe.guidance",
+            )}`,
+          );
+          return;
         }
       }
-
-      const backendSpec = buildBackendSpec(
-        values.backend_choice,
-        values.composite_default ?? DEFAULT_BACKEND,
-        pathMappings,
-        values.root_dir,
-      );
-
-      const nextColor = isCuratedPalette(colorPalette)
-        ? expertPaletteColor(colorPalette)
-        : colorPalette;
-      const nextConfig = omitAgentRuntimeConfig({
-        ...agentConfig,
-        backend: backendSpec,
-        enable_trajectory: values.enable_trajectory === true,
-        conversation_mode: values.conversation_mode,
-      });
-      delete nextConfig.color;
-      delete nextConfig.icon_name;
-      delete nextConfig.icon_url;
-      delete nextConfig.expert_id;
-      delete nextConfig.skill_package_ids;
-      delete nextConfig.published_expert_id;
-      delete nextConfig.welcome_message;
-      delete nextConfig.knowledge_base_ids;
-      delete nextConfig.mcp_servers;
-
-      // Persist page config before PATCH. Workspace I/O survives the
-      // background harness reload; skip when the editor is still loading
-      // or the user never touched 页面配置, so a name/model save cannot
-      // clobber bilingual copy or extra manifest keys.
-      const welcomeSnap = welcomeConfigRef.current?.getSnapshot();
-      if (
-        welcomeSnap &&
-        isAgentChatReady(agent.state) &&
-        shouldWriteWelcomeManifest(welcomeSnap.status, welcomeSnap.dirty)
-      ) {
-        try {
-          const result = await persistWelcomeManifest(
-            agent.agent_id,
-            welcomeSnap.data,
-          );
-          if (result === "invalid-json") {
-            message.warning(t("experts.manifestInvalidJson"));
+      setSaving(true);
+      let bwrapToast: { kind: "success" | "warning"; text: string } | null =
+        null;
+      try {
+        if (shouldProbeRootDir(values.backend_choice, values.root_dir)) {
+          const bwrap = await ensureBubblewrapAfterProbe();
+          const kind = ensureBwrapToastKind(bwrap.status);
+          if (kind !== "none") {
+            bwrapToast = { kind, text: ensureBwrapMessage(bwrap, t) };
           }
-        } catch (manifestErr) {
-          message.warning(
-            apiErrorMessage(manifestErr, t("experts.manifestWriteFailed"), t),
-          );
         }
-      }
 
-      const stored = form.getFieldsValue(true) as EditFormValues;
-      await request(`/agents/${agent.agent_id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: values.name,
-          description: values.description || null,
-          is_shared: values.is_shared ?? false,
-          default_model: defaultModelFromForm(values.default_model),
-          color: nextColor,
-          config: nextConfig,
-          welcome_message: stored.welcome_message ?? "",
-          knowledge_base_ids: stored.knowledge_base_ids ?? [],
-          mcp_servers: stored.mcp_servers ?? [],
-          ...buildAgentRuntimeRequest(values, { clearMissing: true }),
-        }),
-      });
+        const backendSpec = buildBackendSpec(
+          values.backend_choice,
+          values.composite_default ?? DEFAULT_BACKEND,
+          pathMappings,
+          values.root_dir,
+        );
 
-      if (!skillPackagesSupported) {
-        try {
-          await skillPackagesApi.replaceMounted(agent.agent_id, []);
-        } catch (pkgErr) {
-          message.warning(
-            apiErrorMessage(pkgErr, t("experts.skillPackagesClearFailed"), t),
-          );
+        const nextColor = isCuratedPalette(colorPalette)
+          ? expertPaletteColor(colorPalette)
+          : colorPalette;
+        const nextConfig = omitAgentRuntimeConfig({
+          ...agentConfig,
+          backend: backendSpec,
+          enable_trajectory: values.enable_trajectory === true,
+          conversation_mode: values.conversation_mode,
+        });
+        delete nextConfig.color;
+        delete nextConfig.icon_name;
+        delete nextConfig.icon_url;
+        delete nextConfig.expert_id;
+        delete nextConfig.skill_package_ids;
+        delete nextConfig.published_expert_id;
+        delete nextConfig.welcome_message;
+        delete nextConfig.knowledge_base_ids;
+        delete nextConfig.mcp_servers;
+
+        // Persist page config before PATCH. Workspace I/O survives the
+        // background harness reload; skip when the editor is still loading
+        // or the user never touched 页面配置, so a name/model save cannot
+        // clobber bilingual copy or extra manifest keys.
+        const welcomeSnap = welcomeConfigRef.current?.getSnapshot();
+        if (
+          welcomeSnap &&
+          isAgentChatReady(agent.state) &&
+          shouldWriteWelcomeManifest(welcomeSnap.status, welcomeSnap.dirty)
+        ) {
+          try {
+            const result = await persistWelcomeManifest(
+              agent.agent_id,
+              welcomeSnap.data,
+            );
+            if (result === "invalid-json") {
+              message.warning(t("experts.manifestInvalidJson"));
+            }
+          } catch (manifestErr) {
+            message.warning(
+              apiErrorMessage(manifestErr, t("experts.manifestWriteFailed"), t),
+            );
+          }
         }
-      }
 
-      message.success(t("common.saveSuccess"));
-      if (bwrapToast?.kind === "success") {
-        message.success(bwrapToast.text);
-      } else if (bwrapToast?.kind === "warning") {
-        message.warning(bwrapToast.text);
+        const stored = form.getFieldsValue(true) as EditFormValues;
+        await request(`/agents/${agent.agent_id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: values.name,
+            description: values.description || null,
+            is_shared: values.is_shared ?? false,
+            default_model: defaultModelFromForm(values.default_model),
+            color: nextColor,
+            config: nextConfig,
+            welcome_message: stored.welcome_message ?? "",
+            knowledge_base_ids: stored.knowledge_base_ids ?? [],
+            mcp_servers: stored.mcp_servers ?? [],
+            ...buildAgentRuntimeRequest(values, { clearMissing: true }),
+          }),
+        });
+
+        if (!skillPackagesSupported) {
+          try {
+            await skillPackagesApi.replaceMounted(agent.agent_id, []);
+          } catch (pkgErr) {
+            message.warning(
+              apiErrorMessage(pkgErr, t("experts.skillPackagesClearFailed"), t),
+            );
+          }
+        }
+
+        message.success(t("common.saveSuccess"));
+        if (bwrapToast?.kind === "success") {
+          message.success(bwrapToast.text);
+        } else if (bwrapToast?.kind === "warning") {
+          message.warning(bwrapToast.text);
+        }
+        const defaultModel = defaultModelFromForm(values.default_model);
+        if (!keepOpen) {
+          onSaved({
+            agent_id: agent.agent_id,
+            name: values.name,
+            description: values.description || null,
+            default_model: defaultModel,
+            is_shared: values.is_shared ?? false,
+            color: nextColor,
+            icon_url: iconUrl,
+          });
+        }
+        if (keepOpen) {
+          await request(
+            `/agents/${encodeURIComponent(agent.agent_id)}/reload`,
+            { method: "POST" },
+          );
+          onTestSaved();
+        } else onClose();
+      } catch (err) {
+        message.error(apiErrorMessage(err, t("experts.patchFailed"), t));
+      } finally {
+        setSaving(false);
       }
-      const defaultModel = defaultModelFromForm(values.default_model);
-      onSaved({
-        agent_id: agent.agent_id,
-        name: values.name,
-        description: values.description || null,
-        default_model: defaultModel,
-        is_shared: values.is_shared ?? false,
-        color: nextColor,
-        icon_url: iconUrl,
-      });
-      onClose();
-    } catch (err) {
-      message.error(apiErrorMessage(err, t("experts.patchFailed"), t));
-    } finally {
-      setSaving(false);
-    }
-  }, [
-    agent.agent_id,
-    agent.state,
-    agentConfig,
-    colorPalette,
-    form,
-    iconUrl,
-    onClose,
-    onSaved,
-    pathMappings,
-    skillPackagesSupported,
-    t,
-  ]);
+    },
+    [
+      agent.agent_id,
+      agent.state,
+      agentConfig,
+      colorPalette,
+      form,
+      iconUrl,
+      onClose,
+      onSaved,
+      onTestSaved,
+      pathMappings,
+      skillPackagesSupported,
+      t,
+    ],
+  );
 
   useEffect(() => {
     onSaveReady(handleSave);
@@ -1350,24 +1367,54 @@ export default function EditAgentDrawer({
   onSaved,
 }: EditAgentDrawerProps) {
   const { t } = useTranslation();
-  const saveRef = useRef<(() => Promise<void>) | null>(null);
+  const saveRef = useRef<((keepOpen?: boolean) => Promise<void>) | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testOpen, setTestOpen] = useState(true);
+  const [testInput, setTestInput] = useState("");
+  const [testResetKey, setTestResetKey] = useState(0);
+  const testChat = useAgentThreadChat(
+    testOpen && agent ? agent.agent_id : null,
+    testResetKey || false,
+  );
+  const testBubbleColor = (() => {
+    const color = parseStoredColor(agent?.color);
+    return color && isCuratedPalette(color)
+      ? expertPaletteColor(color)
+      : color || "var(--fn-text-brand)";
+  })();
 
-  const handleSaveReady = useCallback((save: () => Promise<void>) => {
-    saveRef.current = save;
+  const handleSaveReady = useCallback(
+    (save: (keepOpen?: boolean) => Promise<void>) => {
+      saveRef.current = save;
+    },
+    [],
+  );
+  const handleTestSaved = useCallback(() => {
+    setTestOpen(true);
+    setTestInput("");
+    setTestResetKey((key) => key + 1);
   }, []);
 
   return (
     <Drawer
       open={open}
       title={t("experts.editExpert")}
-      width={520}
+      width="calc(100vw - var(--fn-sidebar-width))"
       onClose={onClose}
       destroyOnHidden
       footer={
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className={styles.drawerCancelBtn} onClick={onClose}>
             {t("common.cancel")}
+          </button>
+          <button
+            className={styles.drawerSaveBtn}
+            onClick={() => {
+              void saveRef.current?.(true);
+            }}
+            disabled={saving || !agent}
+          >
+            {t("experts.saveAndTest", "保存配置并测试")}
           </button>
           <button
             className={styles.drawerSaveBtn}
@@ -1379,15 +1426,84 @@ export default function EditAgentDrawer({
         </div>
       }
     >
-      {open && agent ? (
-        <EditAgentDrawerBody
-          agent={agent}
-          onClose={onClose}
-          onSaved={onSaved}
-          onSaveReady={handleSaveReady}
-          onSavingChange={setSaving}
-        />
-      ) : null}
+      <div className={styles.createExpertLayoutActive}>
+        {open && agent ? (
+          <div className={styles.editExpertConfigPane}>
+            <EditAgentDrawerBody
+              agent={agent}
+              onClose={onClose}
+              onSaved={onSaved}
+              onSaveReady={handleSaveReady}
+              onSavingChange={setSaving}
+              onTestSaved={handleTestSaved}
+            />
+          </div>
+        ) : null}
+        {testOpen && agent ? (
+          <div className={styles.createExpertTestPanel}>
+            <div className={styles.createExpertTestHeader}>
+              <h3>{t("experts.effectTest", "效果测试")}</h3>
+              <Button
+                type="link"
+                size="small"
+                onClick={() => setTestResetKey((key) => key + 1)}
+              >
+                {t("experts.clearTestConversation", "清空对话")}
+              </Button>
+            </div>
+            <div className={styles.createExpertTestMessages}>
+              {testChat.bootError ? (
+                <Alert type="error" showIcon message={testChat.bootError} />
+              ) : null}
+              {testChat.messages.map((item) => {
+                const text = extractText(item.content).trim();
+                if (!text) return null;
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      marginBottom: 8,
+                      textAlign: item.role === "user" ? "right" : "left",
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        background:
+                          item.role === "user"
+                            ? testBubbleColor
+                            : "transparent",
+                      }}
+                    >
+                      {text}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <Input.Search
+              disabled={saving || !testChat.threadId || !!testChat.bootError}
+              value={testInput}
+              onChange={(event) => setTestInput(event.target.value)}
+              enterButton={t("common.send", "发送")}
+              loading={testChat.isStreaming}
+              onSearch={(value) => {
+                if (
+                  !value.trim() ||
+                  saving ||
+                  !testChat.threadId ||
+                  testChat.isStreaming
+                )
+                  return;
+                testChat.send(value);
+                setTestInput("");
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
     </Drawer>
   );
 }

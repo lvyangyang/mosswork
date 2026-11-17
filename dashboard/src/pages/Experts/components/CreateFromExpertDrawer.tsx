@@ -10,8 +10,11 @@ import {
   Input,
   Select,
   Spin,
+  Typography,
 } from "antd";
 import { message } from "@/utils/antdMessage";
+import { useAgentThreadChat } from "../../../hooks/useAgentThreadChat";
+import { extractText } from "../../Chat/hooks/useChat";
 
 import { request } from "../../../api/request";
 import {
@@ -172,7 +175,6 @@ function LocalReleasePreview({
           />
         )}
       </section>
-
       <section className={styles.localReleaseSection}>
         <div className={styles.localReleaseSectionTitle}>
           {t("experts.skillFilesTitle", { count: skillGroups.length })}
@@ -225,7 +227,6 @@ function LocalReleasePreview({
           />
         )}
       </section>
-
       <section className={styles.localReleaseSection}>
         <div className={styles.localReleaseSectionTitle}>
           {t("experts.subagentFilesTitle", { count: subagentFiles.length })}
@@ -423,6 +424,29 @@ export default function CreateFromExpertDrawer({
     } & AgentRuntimeFormValues
   >();
   const [submitting, setSubmitting] = useState(false);
+  const [testAgentId, setTestAgentId] = useState<string | null>(null);
+  const [testInput, setTestInput] = useState("");
+  const [testResetKey, setTestResetKey] = useState(0);
+  const testPanelRef = useRef<HTMLDivElement>(null);
+  const testChat = useAgentThreadChat(testAgentId, testResetKey || false);
+
+  useEffect(() => {
+    if (open) return;
+    setTestAgentId(null);
+    setTestInput("");
+    setTestResetKey(0);
+  }, [open]);
+
+  useEffect(() => {
+    if (!testAgentId) return;
+    requestAnimationFrame(
+      () =>
+        testPanelRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        }),
+    );
+  }, [testAgentId]);
 
   const { models, modelsLoading, backends, backendsLoading } =
     useAgentFormResources(open && !!source);
@@ -595,7 +619,7 @@ export default function CreateFromExpertDrawer({
     };
   }, [open]);
 
-  const handleCreate = async () => {
+  const handleCreate = async (forTesting = false) => {
     if (!source) return;
     const values = await form.validateFields();
     const stored = form.getFieldsValue(true) as {
@@ -685,7 +709,28 @@ export default function CreateFromExpertDrawer({
         hub_skill_errors?: string[];
         copy_skill_errors?: string[];
       };
-      if (source.kind === "builtin") {
+      if (testAgentId) {
+        await request(`/agents/${encodeURIComponent(testAgentId)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: payload.name,
+            description: payload.description ?? null,
+            default_model: payload.default_model ?? null,
+            color: payload.color ?? null,
+            welcome_message: payload.welcome_message ?? "",
+            skill_package_ids: payload.skill_package_ids,
+            knowledge_base_ids: payload.knowledge_base_ids,
+            mcp_servers: payload.mcp_servers,
+            config: {
+              backend: payload.backend,
+              enable_trajectory: payload.enable_trajectory,
+              conversation_mode: payload.conversation_mode,
+              ...buildAgentRuntimeRequest(values),
+            },
+          }),
+        });
+        body = { agent_id: testAgentId, name: payload.name };
+      } else if (source.kind === "builtin") {
         body = await request<{ agent_id: string; name: string }>(
           `/agents/from-expert/${encodeURIComponent(source.expert.id)}`,
           {
@@ -739,8 +784,23 @@ export default function CreateFromExpertDrawer({
       } else if (bwrapToast?.kind === "warning") {
         message.warning(bwrapToast.text);
       }
-      form.resetFields();
-      onCreated(body.agent_id, body.name);
+      if (forTesting) {
+        setTestAgentId(body.agent_id);
+        if (testAgentId) {
+          await request(`/agents/${encodeURIComponent(testAgentId)}/reload`, {
+            method: "POST",
+          });
+        }
+        setTestResetKey((key) => key + 1);
+        message.success(
+          t("experts.savedReadyToTest", "配置已保存，可以开始测试"),
+        );
+      } else {
+        setTestAgentId(null);
+        setTestInput("");
+        form.resetFields();
+        onCreated(body.agent_id, body.name);
+      }
     } catch (err) {
       message.error(apiErrorMessage(err, t("experts.createFailed"), t));
     } finally {
@@ -829,18 +889,31 @@ export default function CreateFromExpertDrawer({
         name: sourceTitle(source, lang),
       })
     : "";
+  const handleClose = () => {
+    setTestAgentId(null);
+    setTestInput("");
+    onClose();
+  };
 
   return (
     <Drawer
       open={open}
       title={title}
-      width={640}
-      onClose={onClose}
+      width="calc(100vw - var(--fn-sidebar-width))"
+      onClose={handleClose}
       destroyOnHidden
       footer={
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button className={styles.drawerCancelBtn} onClick={onClose}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button className={styles.drawerCancelBtn} onClick={handleClose}>
             {t("common.cancel")}
+          </button>
+          <div style={{ flex: 1 }} />
+          <button
+            className={styles.drawerSaveBtn}
+            onClick={() => void handleCreate(true)}
+            disabled={createBlocked || submitting}
+          >
+            {t("experts.saveAndTest", "保存配置并测试")}
           </button>
           <button
             className={styles.drawerSaveBtn}
@@ -875,683 +948,791 @@ export default function CreateFromExpertDrawer({
           style={{ marginBottom: 16 }}
         />
       )}
-      <Form form={form} layout="vertical" size="middle">
-        <Form.Item
-          name="name"
-          label={t("experts.agentName")}
-          rules={[{ required: true, message: t("experts.pleaseEnterName") }]}
-        >
-          <Input />
-        </Form.Item>
+      <div
+        className={
+          testAgentId
+            ? styles.createExpertLayoutActive
+            : styles.createExpertLayout
+        }
+      >
+        <div className={styles.createExpertConfigPane}>
+          <Form form={form} layout="vertical" size="middle">
+            <Form.Item
+              name="name"
+              label={t("experts.agentName")}
+              rules={[
+                { required: true, message: t("experts.pleaseEnterName") },
+              ]}
+            >
+              <Input />
+            </Form.Item>
 
-        <Form.Item
-          name="agent_id"
-          label={t("experts.customIdLabel")}
-          extra={t("experts.customIdHint")}
-          rules={[
-            {
-              validator: (_: unknown, value: string | undefined) => {
-                const v = value?.trim() ?? "";
-                if (!v) return Promise.resolve();
-                if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,62}[a-zA-Z0-9]$/.test(v)) {
-                  return Promise.reject(
-                    new Error(t("experts.customIdInvalid")),
-                  );
-                }
-                if (
-                  ["api", "admin", "agents", "experts"].includes(
-                    v.toLowerCase(),
-                  )
-                ) {
-                  return Promise.reject(
-                    new Error(t("experts.customIdReserved", { id: v })),
-                  );
-                }
-                return Promise.resolve();
-              },
-            },
-          ]}
-        >
-          <Input placeholder={t("experts.customIdPlaceholder")} allowClear />
-        </Form.Item>
+            <Form.Item
+              name="agent_id"
+              label={t("experts.customIdLabel")}
+              extra={t("experts.customIdHint")}
+              rules={[
+                {
+                  validator: (_: unknown, value: string | undefined) => {
+                    const v = value?.trim() ?? "";
+                    if (!v) return Promise.resolve();
+                    if (
+                      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,62}[a-zA-Z0-9]$/.test(v)
+                    ) {
+                      return Promise.reject(
+                        new Error(t("experts.customIdInvalid")),
+                      );
+                    }
+                    if (
+                      ["api", "admin", "agents", "experts"].includes(
+                        v.toLowerCase(),
+                      )
+                    ) {
+                      return Promise.reject(
+                        new Error(t("experts.customIdReserved", { id: v })),
+                      );
+                    }
+                    return Promise.resolve();
+                  },
+                },
+              ]}
+            >
+              <Input
+                placeholder={t("experts.customIdPlaceholder")}
+                allowClear
+              />
+            </Form.Item>
 
-        <Form.Item name="description" label={t("experts.agentDescription")}>
-          <Input.TextArea rows={2} />
-        </Form.Item>
+            <Form.Item name="description" label={t("experts.agentDescription")}>
+              <Input.TextArea rows={2} />
+            </Form.Item>
 
-        <Form.Item
-          name="welcome_message"
-          label={t("experts.welcomeMessageTitle")}
-          extra={t("experts.createWelcomeHint")}
-        >
-          <Input.TextArea
-            rows={2}
-            placeholder={t("experts.welcomeMessagePlaceholder")}
-          />
-        </Form.Item>
+            <Form.Item
+              name="welcome_message"
+              label={t("experts.welcomeMessageTitle")}
+              extra={t("experts.createWelcomeHint")}
+            >
+              <Input.TextArea
+                rows={2}
+                placeholder={t("experts.welcomeMessagePlaceholder")}
+              />
+            </Form.Item>
 
-        <Collapse
-          ghost
-          items={[
-            {
-              key: "pageConfig",
-              label: t("experts.pageConfigTitle"),
-              children:
-                detailLoading && templatePrompts.length === 0 ? (
-                  <div className={styles.welcomeConfigLoading}>
-                    {t("common.loading")}
-                  </div>
-                ) : (
-                  <WelcomeConfig
-                    key={sourceKey}
-                    ref={welcomeConfigRef}
-                    initialPrompts={templatePrompts}
-                    disabled={detailLoading || submitting}
-                  />
-                ),
-            },
-          ]}
-        />
-
-        <Form.Item label={t("experts.avatar")}>
-          <ExpertAvatarPicker
-            iconUrl={avatarPreview ?? sourceIcon(source).iconUrl}
-            iconName={sourceIcon(source).iconName}
-            color={
-              isCuratedPalette(colorPalette)
-                ? expertPaletteColor(colorPalette)
-                : colorPalette
-            }
-            disabled={submitting}
-            onPick={(file) => {
-              setAvatarFile(file);
-              setAvatarPreview((prev) => {
-                if (prev) URL.revokeObjectURL(prev);
-                return URL.createObjectURL(file);
-              });
-            }}
-            onRemove={
-              avatarPreview
-                ? () => {
-                    setAvatarFile(null);
-                    setAvatarPreview((prev) => {
-                      if (prev) URL.revokeObjectURL(prev);
-                      return null;
-                    });
-                  }
-                : undefined
-            }
-          />
-        </Form.Item>
-
-        <Form.Item label={t("experts.color")} extra={t("experts.colorHint")}>
-          <ExpertColorPicker value={colorPalette} onChange={setColorPalette} />
-        </Form.Item>
-
-        <Form.Item
-          name="conversation_mode"
-          label={t("experts.defaultModeLabel")}
-          tooltip={t("experts.defaultModeHint")}
-          initialValue={DEFAULT_CONVERSATION_MODE}
-        >
-          <Select
-            options={CONVERSATION_MODES.map((mode) => ({
-              value: mode,
-              label: t(`chat.conversationMode.${mode}`),
-            }))}
-          />
-        </Form.Item>
-
-        <Form.Item
-          name="default_model"
-          label={t("experts.defaultModelLabel")}
-          initialValue={MODEL_AUTO_VALUE}
-        >
-          <Select
-            loading={modelsLoading}
-            options={modelOptions}
-            placeholder={t("experts.defaultModelPlaceholder")}
-            showSearch
-            filterOption={(input, opt) =>
-              ((opt?.label as string) ?? "")
-                .toLowerCase()
-                .includes(input.toLowerCase())
-            }
-          />
-        </Form.Item>
-
-        <AgentBackendFields
-          backends={backends}
-          backendsLoading={backendsLoading}
-          backendChoice={backendChoice}
-          pathMappings={pathMappings}
-          rootDirMode="create"
-          onAddPathMapping={addPathMapping}
-          onRemovePathMapping={removePathMapping}
-          onUpdatePathMapping={updatePathMapping}
-        />
-        <AgentTrajectoryField />
-
-        <Form.Item
-          name="skill_package_ids"
-          label={t("experts.skillPackagesLabel")}
-          extra={
-            fixedRelease
-              ? t("experts.localMarket.locked")
-              : skillPackagesSupported
-              ? t("experts.skillPackagesHint")
-              : t("experts.skillPackagesUnsupportedHint")
-          }
-        >
-          <Select
-            mode="multiple"
-            allowClear
-            disabled={fixedRelease || !skillPackagesSupported}
-            loading={skillPackagesLoading}
-            options={skillPackages.map((pack) => ({
-              value: pack.id,
-              label: pack.name,
-            }))}
-            placeholder={t("experts.skillPackagesPlaceholder")}
-          />
-        </Form.Item>
-        <ExpertComposerDefaultsFields />
-
-        <Collapse
-          ghost
-          items={[
-            {
-              key: "advanced",
-              label: t("experts.advancedOptions"),
-              children: <AgentAdvancedConfigFields />,
-            },
-          ]}
-        />
-      </Form>
-
-      {showFilePreview &&
-        (detailLoading ? (
-          <div style={{ textAlign: "center", padding: "16px 0" }}>
-            <Spin size="small" />
-          </div>
-        ) : fixedRelease ? (
-          <LocalReleasePreview
-            configFiles={configFiles}
-            skillGroups={skillGroups}
-            subagentFiles={subagentFiles}
-          />
-        ) : (
-          <Collapse
-            ghost
-            className={styles.drawerCollapse}
-            defaultActiveKey={["configFiles", "skills", "subagents"]}
-            style={{ marginTop: 8, width: "100%" }}
-            items={[
-              {
-                key: "configFiles",
-                label: t("experts.mdFilesTitle"),
-                children: (
-                  <>
-                    <p
-                      style={{
-                        fontSize: 12,
-                        color: "var(--fn-text-tertiary)",
-                        margin: "0 0 8px",
-                      }}
-                    >
-                      {fixedRelease
-                        ? t("experts.localMarket.locked")
-                        : t("experts.mdFilesEditHint")}
-                    </p>
-                    {configFiles.length === 0 ? (
-                      <div
-                        style={{
-                          fontSize: 13,
-                          color: "var(--fn-text-tertiary)",
-                          padding: "4px 0",
-                        }}
-                      >
-                        {t("experts.noWorkspaceFiles")}
+            <Collapse
+              ghost
+              items={[
+                {
+                  key: "pageConfig",
+                  label: t("experts.pageConfigTitle"),
+                  children:
+                    detailLoading && templatePrompts.length === 0 ? (
+                      <div className={styles.welcomeConfigLoading}>
+                        {t("common.loading")}
                       </div>
                     ) : (
-                      <Collapse
-                        size="small"
-                        items={configFiles.map((f) => {
-                          const meta = metaForFile(f.name, t);
-                          return {
-                            key: f.name,
-                            label: (
-                              <span
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "baseline",
-                                  gap: 8,
-                                }}
-                              >
-                                <span style={{ fontWeight: 500 }}>
-                                  {meta.label}
-                                </span>
+                      <WelcomeConfig
+                        key={sourceKey}
+                        ref={welcomeConfigRef}
+                        initialPrompts={templatePrompts}
+                        disabled={detailLoading || submitting}
+                      />
+                    ),
+                },
+              ]}
+            />
+
+            <Form.Item label={t("experts.avatar")}>
+              <ExpertAvatarPicker
+                iconUrl={avatarPreview ?? sourceIcon(source).iconUrl}
+                iconName={sourceIcon(source).iconName}
+                color={
+                  isCuratedPalette(colorPalette)
+                    ? expertPaletteColor(colorPalette)
+                    : colorPalette
+                }
+                disabled={submitting}
+                onPick={(file) => {
+                  setAvatarFile(file);
+                  setAvatarPreview((prev) => {
+                    if (prev) URL.revokeObjectURL(prev);
+                    return URL.createObjectURL(file);
+                  });
+                }}
+                onRemove={
+                  avatarPreview
+                    ? () => {
+                        setAvatarFile(null);
+                        setAvatarPreview((prev) => {
+                          if (prev) URL.revokeObjectURL(prev);
+                          return null;
+                        });
+                      }
+                    : undefined
+                }
+              />
+            </Form.Item>
+
+            <Form.Item
+              label={t("experts.color")}
+              extra={t("experts.colorHint")}
+            >
+              <ExpertColorPicker
+                value={colorPalette}
+                onChange={setColorPalette}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="conversation_mode"
+              label={t("experts.defaultModeLabel")}
+              tooltip={t("experts.defaultModeHint")}
+              initialValue={DEFAULT_CONVERSATION_MODE}
+            >
+              <Select
+                options={CONVERSATION_MODES.map((mode) => ({
+                  value: mode,
+                  label: t(`chat.conversationMode.${mode}`),
+                }))}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="default_model"
+              label={t("experts.defaultModelLabel")}
+              initialValue={MODEL_AUTO_VALUE}
+            >
+              <Select
+                loading={modelsLoading}
+                options={modelOptions}
+                placeholder={t("experts.defaultModelPlaceholder")}
+                showSearch
+                filterOption={(input, opt) =>
+                  ((opt?.label as string) ?? "")
+                    .toLowerCase()
+                    .includes(input.toLowerCase())
+                }
+              />
+            </Form.Item>
+
+            <AgentBackendFields
+              backends={backends}
+              backendsLoading={backendsLoading}
+              backendChoice={backendChoice}
+              pathMappings={pathMappings}
+              rootDirMode="create"
+              onAddPathMapping={addPathMapping}
+              onRemovePathMapping={removePathMapping}
+              onUpdatePathMapping={updatePathMapping}
+            />
+            <AgentTrajectoryField />
+
+            <Form.Item
+              name="skill_package_ids"
+              label={t("experts.skillPackagesLabel")}
+              extra={
+                fixedRelease
+                  ? t("experts.localMarket.locked")
+                  : skillPackagesSupported
+                  ? t("experts.skillPackagesHint")
+                  : t("experts.skillPackagesUnsupportedHint")
+              }
+            >
+              <Select
+                mode="multiple"
+                allowClear
+                disabled={fixedRelease || !skillPackagesSupported}
+                loading={skillPackagesLoading}
+                options={skillPackages.map((pack) => ({
+                  value: pack.id,
+                  label: pack.name,
+                }))}
+                placeholder={t("experts.skillPackagesPlaceholder")}
+              />
+            </Form.Item>
+            <ExpertComposerDefaultsFields />
+
+            <Collapse
+              ghost
+              items={[
+                {
+                  key: "advanced",
+                  label: t("experts.advancedOptions"),
+                  children: <AgentAdvancedConfigFields />,
+                },
+              ]}
+            />
+          </Form>
+
+          {showFilePreview &&
+            (detailLoading ? (
+              <div style={{ textAlign: "center", padding: "16px 0" }}>
+                <Spin size="small" />
+              </div>
+            ) : fixedRelease ? (
+              <LocalReleasePreview
+                configFiles={configFiles}
+                skillGroups={skillGroups}
+                subagentFiles={subagentFiles}
+              />
+            ) : (
+              <Collapse
+                ghost
+                className={styles.drawerCollapse}
+                defaultActiveKey={["configFiles", "skills", "subagents"]}
+                style={{ marginTop: 8, width: "100%" }}
+                items={[
+                  {
+                    key: "configFiles",
+                    label: t("experts.mdFilesTitle"),
+                    children: (
+                      <>
+                        <p
+                          style={{
+                            fontSize: 12,
+                            color: "var(--fn-text-tertiary)",
+                            margin: "0 0 8px",
+                          }}
+                        >
+                          {fixedRelease
+                            ? t("experts.localMarket.locked")
+                            : t("experts.mdFilesEditHint")}
+                        </p>
+                        {configFiles.length === 0 ? (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: "var(--fn-text-tertiary)",
+                              padding: "4px 0",
+                            }}
+                          >
+                            {t("experts.noWorkspaceFiles")}
+                          </div>
+                        ) : (
+                          <Collapse
+                            size="small"
+                            items={configFiles.map((f) => {
+                              const meta = metaForFile(f.name, t);
+                              return {
+                                key: f.name,
+                                label: (
+                                  <span
+                                    style={{
+                                      display: "inline-flex",
+                                      alignItems: "baseline",
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <span style={{ fontWeight: 500 }}>
+                                      {meta.label}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: 11,
+                                        color:
+                                          "var(--fn-text-quaternary, var(--fn-text-tertiary))",
+                                      }}
+                                    >
+                                      {f.name}
+                                    </span>
+                                  </span>
+                                ),
+                                extra: fixedRelease ? undefined : (
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setLocalEditPath(f.name);
+                                    }}
+                                  >
+                                    {t("experts.editFile")}
+                                  </Button>
+                                ),
+                                children: (
+                                  <pre
+                                    style={{
+                                      fontSize: 12,
+                                      maxHeight: 200,
+                                      overflowY: "auto",
+                                      background:
+                                        "var(--fn-bg-secondary, #f5f5f5)",
+                                      padding: 8,
+                                      borderRadius: 4,
+                                      margin: 0,
+                                      whiteSpace: "pre-wrap",
+                                      wordBreak: "break-word",
+                                    }}
+                                  >
+                                    {f.content}
+                                  </pre>
+                                ),
+                              };
+                            })}
+                          />
+                        )}
+                      </>
+                    ),
+                  },
+                  {
+                    key: "skills",
+                    label: (
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          width: "100%",
+                        }}
+                      >
+                        <span>
+                          {t("experts.skillFilesTitle", {
+                            count: skillGroups.length + pendingHubSkills.length,
+                          })}
+                        </span>
+                        {!fixedRelease && (
+                          <Button
+                            type="link"
+                            size="small"
+                            style={{ padding: 0, height: "auto" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSkillPickerOpen(true);
+                            }}
+                          >
+                            {t("experts.addSkill")}
+                          </Button>
+                        )}
+                      </div>
+                    ),
+                    children: (
+                      <>
+                        <p
+                          style={{
+                            fontSize: 12,
+                            color: "var(--fn-text-tertiary)",
+                            margin: "0 0 8px",
+                          }}
+                        >
+                          {fixedRelease
+                            ? t("experts.localMarket.locked")
+                            : t("experts.skillFilesEditHint")}
+                        </p>
+                        {skillGroups.length === 0 &&
+                        pendingHubSkills.length === 0 ? (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: "var(--fn-text-tertiary)",
+                              padding: "4px 0",
+                            }}
+                          >
+                            {t("experts.noSkillFiles")}
+                          </div>
+                        ) : (
+                          <Collapse
+                            size="small"
+                            items={skillGroups.map((group) => ({
+                              key: group.name,
+                              label: (
                                 <span
                                   style={{
-                                    fontSize: 11,
-                                    color:
-                                      "var(--fn-text-quaternary, var(--fn-text-tertiary))",
+                                    display: "inline-flex",
+                                    alignItems: "baseline",
+                                    gap: 8,
                                   }}
                                 >
-                                  {f.name}
+                                  <span style={{ fontWeight: 500 }}>
+                                    {group.emoji} {group.displayName}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      color:
+                                        "var(--fn-text-quaternary, var(--fn-text-tertiary))",
+                                    }}
+                                  >
+                                    skills/{group.name}/
+                                  </span>
                                 </span>
-                              </span>
-                            ),
-                            extra: fixedRelease ? undefined : (
-                              <Button
-                                type="link"
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setLocalEditPath(f.name);
-                                }}
-                              >
-                                {t("experts.editFile")}
-                              </Button>
-                            ),
-                            children: (
-                              <pre
-                                style={{
-                                  fontSize: 12,
-                                  maxHeight: 200,
-                                  overflowY: "auto",
-                                  background: "var(--fn-bg-secondary, #f5f5f5)",
-                                  padding: 8,
-                                  borderRadius: 4,
-                                  margin: 0,
-                                  whiteSpace: "pre-wrap",
-                                  wordBreak: "break-word",
-                                }}
-                              >
-                                {f.content}
-                              </pre>
-                            ),
-                          };
-                        })}
-                      />
-                    )}
-                  </>
-                ),
-              },
-              {
-                key: "skills",
-                label: (
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      width: "100%",
-                    }}
-                  >
-                    <span>
-                      {t("experts.skillFilesTitle", {
-                        count: skillGroups.length + pendingHubSkills.length,
-                      })}
-                    </span>
-                    {!fixedRelease && (
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSkillPickerOpen(true);
-                        }}
-                      >
-                        {t("experts.addSkill")}
-                      </Button>
-                    )}
-                  </div>
-                ),
-                children: (
-                  <>
-                    <p
-                      style={{
-                        fontSize: 12,
-                        color: "var(--fn-text-tertiary)",
-                        margin: "0 0 8px",
-                      }}
-                    >
-                      {fixedRelease
-                        ? t("experts.localMarket.locked")
-                        : t("experts.skillFilesEditHint")}
-                    </p>
-                    {skillGroups.length === 0 &&
-                    pendingHubSkills.length === 0 ? (
-                      <div
-                        style={{
-                          fontSize: 13,
-                          color: "var(--fn-text-tertiary)",
-                          padding: "4px 0",
-                        }}
-                      >
-                        {t("experts.noSkillFiles")}
-                      </div>
-                    ) : (
-                      <Collapse
-                        size="small"
-                        items={skillGroups.map((group) => ({
-                          key: group.name,
-                          label: (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "baseline",
-                                gap: 8,
-                              }}
-                            >
-                              <span style={{ fontWeight: 500 }}>
-                                {group.emoji} {group.displayName}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color:
-                                    "var(--fn-text-quaternary, var(--fn-text-tertiary))",
-                                }}
-                              >
-                                skills/{group.name}/
-                              </span>
-                            </span>
-                          ),
-                          extra: fixedRelease ? undefined : (
-                            <Button
-                              type="link"
-                              size="small"
-                              danger
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFileContents((prev) =>
-                                  removeComposerSkill(prev, group.name),
-                                );
-                                setPendingCopySkills((prev) =>
-                                  prev.filter(
-                                    (item) => item.slug !== group.name,
-                                  ),
-                                );
-                              }}
-                            >
-                              {t("common.delete")}
-                            </Button>
-                          ),
-                          children: (
-                            <>
-                              {group.description ? (
-                                <p
-                                  style={{
-                                    fontSize: 12,
-                                    color: "var(--fn-text-secondary)",
-                                    margin: "0 0 8px",
+                              ),
+                              extra: fixedRelease ? undefined : (
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  danger
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setFileContents((prev) =>
+                                      removeComposerSkill(prev, group.name),
+                                    );
+                                    setPendingCopySkills((prev) =>
+                                      prev.filter(
+                                        (item) => item.slug !== group.name,
+                                      ),
+                                    );
                                   }}
                                 >
-                                  {group.description}
-                                </p>
-                              ) : null}
-                              <Collapse
-                                size="small"
-                                items={group.files.map((f) => {
-                                  const skillBasename = f.name.replace(
-                                    `skills/${group.name}/`,
-                                    "",
-                                  );
-                                  const skillMeta = metaForFile(
-                                    skillBasename,
-                                    t,
-                                  );
-                                  return {
-                                    key: f.name,
-                                    label: (
-                                      <span
-                                        style={{
-                                          display: "inline-flex",
-                                          alignItems: "baseline",
-                                          gap: 8,
-                                        }}
-                                      >
-                                        <span style={{ fontWeight: 500 }}>
-                                          {skillMeta.label}
-                                        </span>
-                                        <span
-                                          style={{
-                                            fontSize: 11,
-                                            color:
-                                              "var(--fn-text-quaternary, var(--fn-text-tertiary))",
-                                          }}
-                                        >
-                                          {skillBasename}
-                                        </span>
-                                      </span>
-                                    ),
-                                    extra: fixedRelease ? undefined : (
-                                      <Button
-                                        type="link"
-                                        size="small"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setLocalEditPath(f.name);
-                                        }}
-                                      >
-                                        {t("experts.editFile")}
-                                      </Button>
-                                    ),
-                                    children: (
-                                      <pre
-                                        style={{
-                                          fontSize: 12,
-                                          maxHeight: 200,
-                                          overflowY: "auto",
-                                          background:
-                                            "var(--fn-bg-secondary, #f5f5f5)",
-                                          padding: 8,
-                                          borderRadius: 4,
-                                          margin: 0,
-                                          whiteSpace: "pre-wrap",
-                                          wordBreak: "break-word",
-                                        }}
-                                      >
-                                        {f.content}
-                                      </pre>
-                                    ),
-                                  };
-                                })}
-                              />
-                            </>
-                          ),
-                        }))}
-                      />
-                    )}
-                    {pendingHubSkills.length > 0 ? (
-                      <div className={styles.fileList} style={{ marginTop: 8 }}>
-                        {pendingHubSkills.map((skill) => (
+                                  {t("common.delete")}
+                                </Button>
+                              ),
+                              children: (
+                                <>
+                                  {group.description ? (
+                                    <p
+                                      style={{
+                                        fontSize: 12,
+                                        color: "var(--fn-text-secondary)",
+                                        margin: "0 0 8px",
+                                      }}
+                                    >
+                                      {group.description}
+                                    </p>
+                                  ) : null}
+                                  <Collapse
+                                    size="small"
+                                    items={group.files.map((f) => {
+                                      const skillBasename = f.name.replace(
+                                        `skills/${group.name}/`,
+                                        "",
+                                      );
+                                      const skillMeta = metaForFile(
+                                        skillBasename,
+                                        t,
+                                      );
+                                      return {
+                                        key: f.name,
+                                        label: (
+                                          <span
+                                            style={{
+                                              display: "inline-flex",
+                                              alignItems: "baseline",
+                                              gap: 8,
+                                            }}
+                                          >
+                                            <span style={{ fontWeight: 500 }}>
+                                              {skillMeta.label}
+                                            </span>
+                                            <span
+                                              style={{
+                                                fontSize: 11,
+                                                color:
+                                                  "var(--fn-text-quaternary, var(--fn-text-tertiary))",
+                                              }}
+                                            >
+                                              {skillBasename}
+                                            </span>
+                                          </span>
+                                        ),
+                                        extra: fixedRelease ? undefined : (
+                                          <Button
+                                            type="link"
+                                            size="small"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setLocalEditPath(f.name);
+                                            }}
+                                          >
+                                            {t("experts.editFile")}
+                                          </Button>
+                                        ),
+                                        children: (
+                                          <pre
+                                            style={{
+                                              fontSize: 12,
+                                              maxHeight: 200,
+                                              overflowY: "auto",
+                                              background:
+                                                "var(--fn-bg-secondary, #f5f5f5)",
+                                              padding: 8,
+                                              borderRadius: 4,
+                                              margin: 0,
+                                              whiteSpace: "pre-wrap",
+                                              wordBreak: "break-word",
+                                            }}
+                                          >
+                                            {f.content}
+                                          </pre>
+                                        ),
+                                      };
+                                    })}
+                                  />
+                                </>
+                              ),
+                            }))}
+                          />
+                        )}
+                        {pendingHubSkills.length > 0 ? (
                           <div
-                            key={skill.skill_name}
-                            className={styles.fileItem}
+                            className={styles.fileList}
+                            style={{ marginTop: 8 }}
                           >
-                            <div className={styles.fileItemMain}>
-                              <div className={styles.fileMeta}>
-                                <div className={styles.fileLabel}>
-                                  {skill.display_name || skill.skill_name}
+                            {pendingHubSkills.map((skill) => (
+                              <div
+                                key={skill.skill_name}
+                                className={styles.fileItem}
+                              >
+                                <div className={styles.fileItemMain}>
+                                  <div className={styles.fileMeta}>
+                                    <div className={styles.fileLabel}>
+                                      {skill.display_name || skill.skill_name}
+                                    </div>
+                                    <div className={styles.filePath}>
+                                      {t("experts.hubSkillPending")}
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className={styles.filePath}>
-                                  {t("experts.hubSkillPending")}
-                                </div>
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  danger
+                                  onClick={() =>
+                                    setPendingHubSkills((prev) =>
+                                      prev.filter(
+                                        (item) =>
+                                          item.skill_name !== skill.skill_name,
+                                      ),
+                                    )
+                                  }
+                                >
+                                  {t("common.delete")}
+                                </Button>
                               </div>
-                            </div>
-                            <Button
-                              type="link"
-                              size="small"
-                              danger
-                              onClick={() =>
-                                setPendingHubSkills((prev) =>
-                                  prev.filter(
-                                    (item) =>
-                                      item.skill_name !== skill.skill_name,
-                                  ),
-                                )
-                              }
-                            >
-                              {t("common.delete")}
-                            </Button>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
-                ),
-              },
-              {
-                key: "subagents",
-                label: (
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      width: "100%",
-                    }}
-                  >
-                    <span>
-                      {t("experts.subagentFilesTitle", {
-                        count: subagentFiles.length,
-                      })}
-                    </span>
-                    {!fixedRelease && (
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0, height: "auto" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSubagentPickerOpen(true);
-                        }}
-                      >
-                        {t("experts.addSubagent")}
-                      </Button>
-                    )}
-                  </div>
-                ),
-                children: (
-                  <>
-                    <p
-                      style={{
-                        fontSize: 12,
-                        color: "var(--fn-text-tertiary)",
-                        margin: "0 0 8px",
-                      }}
-                    >
-                      {fixedRelease
-                        ? t("experts.localMarket.locked")
-                        : t("experts.subagentFilesEditHint")}
-                    </p>
-                    {subagentFiles.length === 0 ? (
+                        ) : null}
+                      </>
+                    ),
+                  },
+                  {
+                    key: "subagents",
+                    label: (
                       <div
                         style={{
-                          fontSize: 13,
-                          color: "var(--fn-text-tertiary)",
-                          padding: "4px 0",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          width: "100%",
                         }}
                       >
-                        {t("experts.noSubagentFiles")}
+                        <span>
+                          {t("experts.subagentFilesTitle", {
+                            count: subagentFiles.length,
+                          })}
+                        </span>
+                        {!fixedRelease && (
+                          <Button
+                            type="link"
+                            size="small"
+                            style={{ padding: 0, height: "auto" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSubagentPickerOpen(true);
+                            }}
+                          >
+                            {t("experts.addSubagent")}
+                          </Button>
+                        )}
                       </div>
-                    ) : (
-                      <Collapse
-                        size="small"
-                        items={subagentFiles.map((subagent) => ({
-                          key: subagent.slug,
-                          label: (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "baseline",
-                                gap: 8,
-                              }}
-                            >
-                              <span style={{ fontWeight: 500 }}>
-                                {subagent.emoji} {subagent.name}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color:
-                                    "var(--fn-text-quaternary, var(--fn-text-tertiary))",
-                                }}
-                              >
-                                agents/{subagent.slug}.md
-                              </span>
-                            </span>
-                          ),
-                          extra: fixedRelease ? undefined : (
-                            <span style={{ display: "inline-flex", gap: 4 }}>
-                              <Button
-                                type="link"
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setLocalEditPath(subagent.file.name);
-                                }}
-                              >
-                                {t("experts.editFile")}
-                              </Button>
-                              <Button
-                                type="link"
-                                size="small"
-                                danger
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setFileContents((prev) =>
-                                    removeComposerSubagent(prev, subagent.slug),
-                                  );
-                                }}
-                              >
-                                {t("common.delete")}
-                              </Button>
-                            </span>
-                          ),
-                          children: (
-                            <>
-                              {subagent.description ? (
-                                <p
+                    ),
+                    children: (
+                      <>
+                        <p
+                          style={{
+                            fontSize: 12,
+                            color: "var(--fn-text-tertiary)",
+                            margin: "0 0 8px",
+                          }}
+                        >
+                          {fixedRelease
+                            ? t("experts.localMarket.locked")
+                            : t("experts.subagentFilesEditHint")}
+                        </p>
+                        {subagentFiles.length === 0 ? (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: "var(--fn-text-tertiary)",
+                              padding: "4px 0",
+                            }}
+                          >
+                            {t("experts.noSubagentFiles")}
+                          </div>
+                        ) : (
+                          <Collapse
+                            size="small"
+                            items={subagentFiles.map((subagent) => ({
+                              key: subagent.slug,
+                              label: (
+                                <span
                                   style={{
-                                    fontSize: 12,
-                                    color: "var(--fn-text-secondary)",
-                                    margin: "0 0 8px",
+                                    display: "inline-flex",
+                                    alignItems: "baseline",
+                                    gap: 8,
                                   }}
                                 >
-                                  {subagent.description}
-                                </p>
-                              ) : null}
-                              <pre
-                                style={{
-                                  fontSize: 12,
-                                  maxHeight: 200,
-                                  overflowY: "auto",
-                                  background: "var(--fn-bg-secondary, #f5f5f5)",
-                                  padding: 8,
-                                  borderRadius: 4,
-                                  margin: 0,
-                                  whiteSpace: "pre-wrap",
-                                  wordBreak: "break-word",
-                                }}
-                              >
-                                {subagent.file.content}
-                              </pre>
-                            </>
-                          ),
-                        }))}
-                      />
-                    )}
-                  </>
-                ),
-              },
-            ]}
-          />
-        ))}
+                                  <span style={{ fontWeight: 500 }}>
+                                    {subagent.emoji} {subagent.name}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      color:
+                                        "var(--fn-text-quaternary, var(--fn-text-tertiary))",
+                                    }}
+                                  >
+                                    agents/{subagent.slug}.md
+                                  </span>
+                                </span>
+                              ),
+                              extra: fixedRelease ? undefined : (
+                                <span
+                                  style={{ display: "inline-flex", gap: 4 }}
+                                >
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setLocalEditPath(subagent.file.name);
+                                    }}
+                                  >
+                                    {t("experts.editFile")}
+                                  </Button>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    danger
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setFileContents((prev) =>
+                                        removeComposerSubagent(
+                                          prev,
+                                          subagent.slug,
+                                        ),
+                                      );
+                                    }}
+                                  >
+                                    {t("common.delete")}
+                                  </Button>
+                                </span>
+                              ),
+                              children: (
+                                <>
+                                  {subagent.description ? (
+                                    <p
+                                      style={{
+                                        fontSize: 12,
+                                        color: "var(--fn-text-secondary)",
+                                        margin: "0 0 8px",
+                                      }}
+                                    >
+                                      {subagent.description}
+                                    </p>
+                                  ) : null}
+                                  <pre
+                                    style={{
+                                      fontSize: 12,
+                                      maxHeight: 200,
+                                      overflowY: "auto",
+                                      background:
+                                        "var(--fn-bg-secondary, #f5f5f5)",
+                                      padding: 8,
+                                      borderRadius: 4,
+                                      margin: 0,
+                                      whiteSpace: "pre-wrap",
+                                      wordBreak: "break-word",
+                                    }}
+                                  >
+                                    {subagent.file.content}
+                                  </pre>
+                                </>
+                              ),
+                            }))}
+                          />
+                        )}
+                      </>
+                    ),
+                  },
+                ]}
+              />
+            ))}
+        </div>
+        {testAgentId ? (
+          <div className={styles.createExpertTestPanel} ref={testPanelRef}>
+            <div className={styles.createExpertTestHeader}>
+              <Typography.Title level={5} style={{ marginTop: 0 }}>
+                {t("experts.effectTest", "效果测试")}
+              </Typography.Title>
+              <Button
+                type="link"
+                size="small"
+                onClick={() => setTestResetKey((key) => key + 1)}
+              >
+                {t("experts.clearTestConversation", "清空对话")}
+              </Button>
+            </div>
+            <div className={styles.createExpertTestMessages}>
+              {testChat.bootError ? (
+                <Alert type="error" showIcon message={testChat.bootError} />
+              ) : null}
+              {testChat.messages.map((item) => {
+                const text = extractText(item.content).trim();
+                if (!text) return null;
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      marginBottom: 8,
+                      textAlign: item.role === "user" ? "right" : "left",
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        background:
+                          item.role === "user"
+                            ? isCuratedPalette(colorPalette)
+                              ? expertPaletteColor(colorPalette)
+                              : colorPalette
+                            : "transparent",
+                      }}
+                    >
+                      {text}
+                    </span>
+                  </div>
+                );
+              })}
+              {testChat.booting ? <Spin size="small" /> : null}
+            </div>
+            <Input.Search
+              disabled={
+                !testChat.threadId || submitting || !!testChat.bootError
+              }
+              value={testInput}
+              onChange={(event) => setTestInput(event.target.value)}
+              placeholder={t(
+                "experts.testPlaceholder",
+                "输入消息测试 Agent 回复",
+              )}
+              enterButton={t("common.send", "发送")}
+              loading={testChat.isStreaming}
+              onSearch={(value) => {
+                if (
+                  !value.trim() ||
+                  !testChat.threadId ||
+                  submitting ||
+                  testChat.isStreaming
+                )
+                  return;
+                testChat.send(value);
+                setTestInput("");
+              }}
+            />
+          </div>
+        ) : null}
+      </div>
       <SkillSourcePickerModal
         open={skillPickerOpen}
         excludeSlugs={selectedSkillSlugs}

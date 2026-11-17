@@ -310,7 +310,7 @@
     "RESOURCE_RETAINED": "This resource and its history must be retained. Deletion is unavailable."
   },
   "nav": {
-    "chat": "Agent",
+    "chat": "Tasks",
     "company": "Company",
     "common": "Common",
     "control": "Control",
