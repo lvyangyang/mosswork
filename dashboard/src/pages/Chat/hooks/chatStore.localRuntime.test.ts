@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DesktopRuntimeBridge, RuntimeEvent } from "@/api/desktopRuntime";
 import { mossworkThreadsApi } from "@/api/modules/mossworkThreads";
 import * as store from "./chatStore";
+import { LOCAL_STALL_WARN_MS } from "./wsResumeGate";
 let listener: ((event: RuntimeEvent) => void) | undefined;
 let bridge: DesktopRuntimeBridge;
 let websocket: ReturnType<typeof vi.fn>;
@@ -97,6 +98,92 @@ it("routes live process output by tool call and replaces the preview with the fi
     sync_state: "pending",
   });
   await pending;
+});
+
+it("shows retry status and keeps it during a waiting heartbeat", async () => {
+  const pending = store.sendTurn("local-thread", "retry", "expert", "key");
+  listener?.({
+    event: "model_status",
+    thread_id: "local-thread",
+    status: "retrying",
+    attempt: 1,
+    max_attempts: 3,
+    error: "company_model_timeout",
+  });
+  expect(store.getSnapshot("local-thread").modelStatus).toEqual({
+    attempt: 1,
+    maxAttempts: 3,
+    error: "company_model_timeout",
+  });
+  listener?.({
+    event: "model_status",
+    thread_id: "local-thread",
+    status: "waiting",
+  });
+  expect(store.getSnapshot("local-thread").modelStatus).toEqual({
+    attempt: 1,
+    maxAttempts: 3,
+    error: "company_model_timeout",
+  });
+  listener?.({
+    event: "done",
+    thread_id: "local-thread",
+    status: "completed",
+  });
+  await pending;
+});
+
+it("keeps the original runtime error code on a failed local task", async () => {
+  const pending = store.sendTurn("local-thread", "fail", "expert", "key");
+  listener?.({
+    event: "done",
+    thread_id: "local-thread",
+    status: "failed",
+    error: "模型服务请求失败",
+    error_code: "company_model_http_400",
+  });
+  await pending;
+  expect(
+    store.getSnapshot("local-thread").messages.at(-1)?.errorInfo?.code,
+  ).toBe("company_model_http_400");
+});
+
+it("falls back to the local runtime error code when none is provided", async () => {
+  const pending = store.sendTurn("local-thread", "fail", "expert", "key");
+  listener?.({
+    event: "done",
+    thread_id: "local-thread",
+    status: "failed",
+    error: "模型服务请求失败",
+  });
+  await pending;
+  expect(
+    store.getSnapshot("local-thread").messages.at(-1)?.errorInfo?.code,
+  ).toBe("local_runtime_error");
+});
+
+it("warns about a quiet local stream without sealing it", async () => {
+  vi.useFakeTimers();
+  try {
+    const pending = store.sendTurn("local-thread", "wait", "expert", "key");
+    await vi.advanceTimersByTimeAsync(LOCAL_STALL_WARN_MS + 20_000);
+    expect(store.getSnapshot("local-thread").streamStalled).toBe(true);
+    expect(store.getSnapshot("local-thread").isStreaming).toBe(true);
+    listener?.({
+      event: "model_status",
+      thread_id: "local-thread",
+      status: "waiting",
+    });
+    expect(store.getSnapshot("local-thread").streamStalled).toBe(false);
+    listener?.({
+      event: "done",
+      thread_id: "local-thread",
+      status: "completed",
+    });
+    await pending;
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("passes imported local images with their original hash and size to the native task", async () => {
   const file = {
@@ -831,6 +918,66 @@ it("reattaches to a native task after a page reload without replaying start", as
   listener?.({ event: "done", thread_id: "local-thread", status: "completed" });
   expect(store.getSnapshot("local-thread").isStreaming).toBe(false);
   expect(websocket).not.toHaveBeenCalled();
+});
+
+it("applies model status events on the native reattach path", async () => {
+  vi.mocked(bridge.status).mockResolvedValue({
+    active_tasks: [
+      { task_id: "task", thread_id: "local-thread", status: "running" },
+    ],
+  });
+  await store.attachThread("local-thread", "expert", "local-thread");
+  listener?.({
+    event: "model_status",
+    thread_id: "local-thread",
+    task_id: "task",
+    status: "retrying",
+    attempt: 2,
+    max_attempts: 3,
+    error: "company_model_failed",
+  });
+  expect(store.getSnapshot("local-thread").modelStatus).toEqual({
+    attempt: 2,
+    maxAttempts: 3,
+    error: "company_model_failed",
+  });
+  listener?.({
+    event: "model_status",
+    thread_id: "local-thread",
+    task_id: "task",
+    status: "waiting",
+  });
+  expect(store.getSnapshot("local-thread").modelStatus).toEqual({
+    attempt: 2,
+    maxAttempts: 3,
+    error: "company_model_failed",
+  });
+  listener?.({
+    event: "done",
+    thread_id: "local-thread",
+    task_id: "task",
+    status: "completed",
+  });
+});
+
+it("preserves the original error code on a reattached native failure", async () => {
+  vi.mocked(bridge.status).mockResolvedValue({
+    active_tasks: [
+      { task_id: "task", thread_id: "local-thread", status: "running" },
+    ],
+  });
+  await store.attachThread("local-thread", "expert", "local-thread");
+  listener?.({
+    event: "done",
+    thread_id: "local-thread",
+    task_id: "task",
+    status: "failed",
+    error: "模型服务请求失败",
+    error_code: "company_model_http_400",
+  });
+  expect(
+    store.getSnapshot("local-thread").messages.at(-1)?.errorInfo?.code,
+  ).toBe("company_model_http_400");
 });
 
 it("keeps a reattached task active when an older task emits late output and completion", async () => {

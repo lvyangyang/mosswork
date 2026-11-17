@@ -893,6 +893,8 @@ export function useChat(
   const {
     messages,
     isStreaming,
+    modelStatus,
+    streamStalled,
     localPreparing,
     thinkingStartedAt,
     runUsage,
@@ -1311,6 +1313,8 @@ export function useChat(
   return {
     messages,
     isStreaming,
+    modelStatus,
+    streamStalled,
     localPreparing,
     thinkingStartedAt,
     runUsage,

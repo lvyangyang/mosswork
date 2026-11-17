@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"mosswork.desktop/internal/companyruntime"
 )
 
 func TestRuntimeIPCRejectsStaleAndUnsupportedRequests(t *testing.T) {
@@ -50,6 +52,18 @@ func TestRuntimeModelFailureMessages(t *testing.T) {
 		if got := runtimeErrorText(code); strings.Contains(got, "检查公司连接和客户端工具包") {
 			t.Fatalf("model failure used generic connection message for %s: %s", code, got)
 		}
+	}
+}
+
+func TestRuntimeErrorTranslationPreservesCode(t *testing.T) {
+	m := applyRuntimeErrorTranslation(companyruntime.Message{
+		Error: "company_model_http_400",
+	})
+	if m.ErrorCode != "company_model_http_400" {
+		t.Fatalf("error code was not preserved: %q", m.ErrorCode)
+	}
+	if m.Error == "company_model_http_400" || m.Error == "" {
+		t.Fatalf("error was not translated: %q", m.Error)
 	}
 }
 

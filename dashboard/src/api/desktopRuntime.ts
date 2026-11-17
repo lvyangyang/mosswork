@@ -21,13 +21,23 @@ export interface RuntimeEvent {
     | "runtime_exit"
     | "steer"
     | "process"
-    | "process_output";
+    | "process_output"
+    | "model_status";
   thread_id?: string;
   task_id?: string;
   data?: HarnessChunk;
   frame?: Record<string, unknown>;
-  status?: "completed" | "failed" | "cancelled" | "unknown";
+  status?:
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "unknown"
+    | "waiting"
+    | "retrying";
+  attempt?: number;
+  max_attempts?: number;
   error?: string;
+  error_code?: string;
   artifacts?: LocalArtifact[];
   sync_state?: "pending" | "synced";
   pid?: number;
@@ -196,13 +206,15 @@ export async function runLocalTurn(
       if (!matchesRuntimeTask(event, params.thread_id, params.task_id)) return;
       onEvent(event);
       if (event.event === "done") {
-        finish(
-          ["failed", "unknown"].includes(event.status ?? "")
-            ? new Error(
-                event.error || "本地任务未完成，请检查公司连接和本地工具状态。",
-              )
-            : undefined,
-        );
+        if (["failed", "unknown"].includes(event.status ?? "")) {
+          const error = new Error(
+            event.error || "本地任务未完成，请检查公司连接和本地工具状态。",
+          ) as Error & { errorCode?: string };
+          error.errorCode = event.error_code;
+          finish(error);
+        } else {
+          finish();
+        }
       }
     });
     const abort = () => {

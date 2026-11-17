@@ -347,6 +347,42 @@ async def test_temporary_model_timeout_retries_without_replaying_tools(company, 
 
 
 @pytest.mark.asyncio
+async def test_model_retry_status_is_emitted_through_runtime_events(company, tmp_path):
+    from octop.infra.company_runtime.client import CompanyModelError
+
+    server, client, _, _ = company
+    install_agent(server)
+    calls = 0
+
+    class RetryableModel(ToolModel):
+        async def astream(self, messages):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise CompanyModelError("company_model_timeout", retryable=True)
+            async for chunk in super().astream(messages):
+                yield chunk
+
+    server.app_runtime.agent_registry.get_agent("expert").model_factory.get_chat_model = (
+        lambda ref: RetryableModel()
+    )
+    runtime, events = runtime_for(client, tmp_path)
+    try:
+        await run_turn(runtime, completion_timeout=60)
+        retry_events = [
+            event
+            for event in events
+            if event.get("event") == "model_status" and event.get("status") == "retrying"
+        ]
+        assert retry_events
+        assert retry_events[0]["attempt"] == 1
+        assert retry_events[0]["max_attempts"] == 3
+        assert retry_events[0]["error"].startswith("company_model_")
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_unknown_model_failure_retries_without_replaying_tools(company, tmp_path, caplog):
     server, client, _, _ = company
     install_agent(server)

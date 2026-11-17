@@ -20,6 +20,9 @@ from pydantic import ConfigDict, Field
 
 from octop.infra.company_runtime.model_context import calibrated_prompt_tokens
 
+_FIRST_BYTE_TIMEOUT_SECONDS = 120.0
+_HEARTBEAT_INTERVAL_SECONDS = 30.0
+
 
 class CompanyServiceError(RuntimeError):
     def __init__(self, reason: str, status: int) -> None:
@@ -100,6 +103,7 @@ class CompanyChatModel(BaseChatModel):
     client: Any = Field(exclude=True)
     task_id: str
     model_ref: str
+    progress: Any = Field(default=None, exclude=True)
 
     @property
     def _llm_type(self) -> str:
@@ -137,7 +141,27 @@ class CompanyChatModel(BaseChatModel):
                 timeout=httpx.Timeout(600, connect=10),
             ) as response:
                 response.raise_for_status()
-                async for line in response.aiter_lines():
+                reader = response.aiter_lines()
+                pending: asyncio.Task[str] | None = None
+                waited = 0.0
+                while True:
+                    if pending is None:
+                        pending = asyncio.ensure_future(reader.__anext__())
+                    done, _ = await asyncio.wait({pending}, timeout=_HEARTBEAT_INTERVAL_SECONDS)
+                    if not done:
+                        waited += _HEARTBEAT_INTERVAL_SECONDS
+                        if not received and waited >= _FIRST_BYTE_TIMEOUT_SECONDS:
+                            pending.cancel()
+                            raise CompanyModelError("company_model_timeout", retryable=True)
+                        if self.progress:
+                            self.progress({"status": "waiting"})
+                        continue
+                    waited = 0.0
+                    try:
+                        line = pending.result()
+                    except StopAsyncIteration:
+                        break
+                    pending = None
                     if not line:
                         continue
                     import json

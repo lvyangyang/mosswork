@@ -1402,6 +1402,8 @@
       "waiting": "等待队列空闲",
       "retry": "重试失败项"
     },
+    "modelRetrying": "模型服务响应慢，正在重试（{{attempt}}/{{maxAttempts}}）",
+    "localStalled": "任务长时间无响应：可继续等待，或点击停止按钮结束任务",
     "thinking": "正在思考",
     "continuing": "继续生成中",
     "generating": "生成中",

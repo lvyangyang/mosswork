@@ -1402,6 +1402,8 @@
       "waiting": "Waiting for queue",
       "retry": "Retry failed chats"
     },
+    "modelRetrying": "The model service is slow; retrying ({{attempt}}/{{maxAttempts}})",
+    "localStalled": "This task has had no response for a long time. You can keep waiting or stop the task.",
     "thinking": "Thinking",
     "continuing": "Continuing",
     "generating": "Generating",

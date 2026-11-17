@@ -103,11 +103,19 @@ export interface ChatMessage {
   localArtifacts?: import("../../../api/desktopRuntime").LocalArtifact[];
 }
 
+export interface ModelStatus {
+  attempt: number;
+  maxAttempts: number;
+  error?: string;
+}
+
 /** Per-session state held in the chat store's module-scoped Map. */
 export interface SessionStreamState {
   localPreparing?: boolean;
   messages: ChatMessage[];
   isStreaming: boolean;
+  modelStatus: ModelStatus | null;
+  streamStalled: boolean;
   /** Wall-clock ms when the current user turn started waiting on the model. */
   thinkingStartedAt: number | null;
   runUsage: TokenUsage | null;
@@ -166,6 +174,8 @@ export interface SessionStreamState {
 export interface SessionSnapshot {
   messages: ChatMessage[];
   isStreaming: boolean;
+  modelStatus: ModelStatus | null;
+  streamStalled: boolean;
   localPreparing?: boolean;
   thinkingStartedAt: number | null;
   runUsage: TokenUsage | null;

@@ -97,6 +97,7 @@ import ChatSidebarPanel from "./components/ChatSidebarPanel";
 import ChatTitleBar from "./components/ChatTitleBar";
 import TeamChatBadge from "./components/TeamChatBadge";
 import ComposerTodoProgress from "./components/ComposerTodoProgress";
+import ModelStatusBanner from "./components/ModelStatusBanner";
 import AskQuestionCard from "./components/AskQuestionCard";
 import {
   findAutoResumableApproval,
@@ -358,6 +359,8 @@ function ChatPageInner() {
   const {
     messages,
     isStreaming,
+    modelStatus,
+    streamStalled,
     localPreparing,
     thinkingStartedAt,
     historyLoading,
@@ -1882,6 +1885,10 @@ function ChatPageInner() {
             )}
             <div className={styles.todoProgressDock}>
               <div className={styles.todoProgressDockInner}>
+                <ModelStatusBanner
+                  modelStatus={modelStatus}
+                  streamStalled={streamStalled}
+                />
                 <ComposerTodoProgress
                   key={`${resolvedAgentId}:${activeThreadId}`}
                   messages={messages}

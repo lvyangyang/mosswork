@@ -12,6 +12,20 @@ export const MAX_STREAM_RESUME_ATTEMPTS = 8;
  */
 export const STREAM_STALE_WITHOUT_SOCKET_MS = 20_000;
 
+/** Warn when a local runtime has produced no event for ten minutes. */
+export const LOCAL_STALL_WARN_MS = 10 * 60_000;
+
+export function shouldWarnLocalStall(opts: {
+  isStreaming: boolean;
+  isLocalStream: boolean;
+  lastActivityAt: number | null;
+  now: number;
+}): boolean {
+  if (!opts.isStreaming || !opts.isLocalStream || opts.lastActivityAt == null)
+    return false;
+  return opts.now - opts.lastActivityAt >= LOCAL_STALL_WARN_MS;
+}
+
 /**
  * Whether an unexpected WS close should keep the local stream open and
  * re-subscribe, instead of sealing the turn as finished.
