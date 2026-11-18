@@ -19,6 +19,18 @@ class RuntimeConflict(ValueError):
     pass
 
 
+def _thread_is_empty_for_local_claim(conn: Any, thread_id: str, last_active: int) -> bool:
+    """Return whether a server session has never been used by any runtime path."""
+    if last_active != 0:
+        return False
+    for table in ("thread_messages", "company_runtime_tasks", "execution_sessions"):
+        if conn.execute(
+            f"SELECT 1 FROM {table} WHERE thread_id=? LIMIT 1", (thread_id,)
+        ).fetchone():
+            return False
+    return True
+
+
 class CompanyRuntimeRepo:
     def __init__(self, db: DatabasePool) -> None:
         self.db = db
@@ -111,14 +123,23 @@ class CompanyRuntimeRepo:
                 raise RuntimeConflict("thread_not_owned")
             mode = str(thread["execution_mode"] or "server")
             if mode == "server":
-                # Threads created by pre-mode clients have no dashboard session
-                # row. Keep their legacy local path working, while every new
-                # explicitly-created server thread is fail-closed.
+                # A device may claim a server-created session only while it is
+                # completely unused. This preserves fail-closed behavior for
+                # sessions that already belong to the server execution path.
                 has_session = conn.execute(
                     "SELECT 1 FROM sessions WHERE thread_id=?", (thread_id,)
                 ).fetchone()
                 if has_session:
-                    raise RuntimeConflict("execution_mode_server")
+                    if _thread_is_empty_for_local_claim(
+                        conn, thread_id, int(thread["last_active"] or 0)
+                    ):
+                        conn.execute(
+                            "UPDATE threads SET execution_mode='local' WHERE thread_id=?",
+                            (thread_id,),
+                        )
+                        mode = "local"
+                    else:
+                        raise RuntimeConflict("execution_mode_server")
             elif mode != "local":
                 raise RuntimeConflict("execution_mode_invalid")
             existing = conn.execute(
@@ -148,7 +169,7 @@ class CompanyRuntimeRepo:
                 if thread["last_active"] or has_history:
                     raise RuntimeConflict("legacy_thread_read_only")
                 if mode == "local" and not project_id:
-                    raise RuntimeConflict("project_binding_required")
+                    project_id = thread_id
                 if project_id:
                     revision = binding_revision or 1
                     conn.execute(

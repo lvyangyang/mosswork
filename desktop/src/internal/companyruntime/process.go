@@ -35,6 +35,7 @@ type Message struct {
 	ToolCallID  string          `json:"tool_call_id,omitempty"`
 	Artifacts   json.RawMessage `json:"artifacts,omitempty"`
 	ErrorCode   string          `json:"error_code,omitempty"`
+	Phase       string          `json:"phase,omitempty"`
 }
 type Process struct {
 	cmd       *exec.Cmd

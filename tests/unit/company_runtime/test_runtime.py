@@ -19,7 +19,6 @@ from tests.support.http import serve_http
 async def test_explicit_local_thread_preserves_project_admission_fields(
     company, tmp_path, with_project
 ):
-    from octop.infra.company_runtime.client import CompanyServiceError
     from tests.unit.company_runtime.test_memory_approvals import native_runtime
 
     server, client, _, _ = company
@@ -42,9 +41,23 @@ async def test_explicit_local_thread_preserves_project_admission_fields(
     }
     try:
         if not with_project:
-            with pytest.raises(CompanyServiceError, match="project_binding_required"):
-                await runtime.start(params)
-            assert server.services.company_runtime_repo.task(params["task_id"]) is None
+            await runtime.start(params)
+            with server.services.db.connect() as conn:
+                project_row = conn.execute(
+                    "SELECT project_id FROM thread_project_bindings WHERE thread_id=?",
+                    (thread,),
+                ).fetchone()
+                runtime_row = conn.execute(
+                    "SELECT project_name FROM company_runtime_threads WHERE thread_id=?",
+                    (thread,),
+                ).fetchone()
+                thread_row = conn.execute(
+                    "SELECT execution_mode FROM threads WHERE thread_id=?", (thread,)
+                ).fetchone()
+            assert project_row["project_id"] == thread
+            assert runtime_row["project_name"] == thread
+            assert thread_row["execution_mode"] == "local"
+            assert server.services.company_runtime_repo.task(params["task_id"]) is not None
             return
         await runtime.start({**params, **project})
         await asyncio.wait_for(runtime.work[thread], 15)
@@ -62,6 +75,37 @@ async def test_explicit_local_thread_preserves_project_admission_fields(
         stored = server.services.company_runtime_repo.task(params["task_id"])
         request = json.loads(stored["request_json"])
         assert {key: request[key] for key in project} == project
+    finally:
+        await runtime.close()
+
+
+async def test_nonempty_server_thread_remains_server_owned(company, tmp_path):
+    from octop.infra.company_runtime.client import CompanyServiceError
+    from tests.unit.company_runtime.test_memory_approvals import native_runtime
+
+    server, client, _, owner = company
+    install_agent(server)
+    server.services.session_repo.upsert(
+        session_key="thread2",
+        agent_id="expert",
+        user_id=owner,
+        channel_type="dashboard",
+        chat_type="dm",
+        thread_id="thread2",
+    )
+    server.services.thread_repo.touch_last_active("thread2")
+    runtime = native_runtime(client, tmp_path, [])
+    try:
+        with pytest.raises(CompanyServiceError, match="execution_mode_server"):
+            await runtime.start(
+                {
+                    "task_id": "nonempty-server-thread",
+                    "thread_id": "thread2",
+                    "agent_id": "expert",
+                    "text": "Must remain server-owned",
+                }
+            )
+        assert server.services.thread_repo.get("thread2").execution_mode == "server"
     finally:
         await runtime.close()
 

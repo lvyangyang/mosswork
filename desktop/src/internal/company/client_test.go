@@ -27,6 +27,60 @@ func TestBaseURLRequiresHTTPOrigin(t *testing.T) {
 	}
 }
 
+func TestCompanyPostUsesCurrentDeviceCredentialAndBody(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-mosswork-Device-Credential"); got != "mosswork-device.test" {
+			t.Fatalf("credential header = %q", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["agent_id"] != "expert" {
+			t.Fatalf("request body = %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"thread_id":"thr_test","execution_mode":"local"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient()
+	defer client.Close(false)
+	client.httpClient.Transport = server.Client().Transport
+	client.status = Status{State: "online", DeviceID: "device", OwnerUserID: 7, ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	client.credential = "mosswork-device.test"
+
+	status, response, err := client.CompanyPost(
+		context.Background(), server.URL, "/api/company-runtime/threads",
+		[]byte(`{"agent_id":"expert"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusCreated || string(response) != `{"thread_id":"thr_test","execution_mode":"local"}` {
+		t.Fatalf("response = %d %s", status, response)
+	}
+}
+
+func TestCompanyPostHonorsContextTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient()
+	defer client.Close(false)
+	client.status = Status{State: "online", DeviceID: "device", OwnerUserID: 7, ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	client.credential = "mosswork-device.test"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, _, err := client.CompanyPost(ctx, server.URL, "/api/company-runtime/threads", []byte(`{}`)); err == nil {
+		t.Fatal("expected context timeout")
+	}
+}
+
 func testServer(t *testing.T, handler func(context.Context, *websocket.Conn, hello, ready)) (*Client, string) {
 	t.Helper()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

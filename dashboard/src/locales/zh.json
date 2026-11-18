@@ -1408,6 +1408,8 @@
     "continuing": "继续生成中",
     "generating": "生成中",
     "preparingLocalTask": "正在准备本地任务",
+    "preparingLocalTools": "正在校验本地工具包",
+    "preparingLocalRuntime": "正在启动本地运行时",
     "generatingWithElapsed": "生成中 · {{seconds}}s",
     "membersResponding": "成员回答中",
     "memberResponding": "{{name}} 正在回答",

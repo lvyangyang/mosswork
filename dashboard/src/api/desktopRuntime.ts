@@ -22,7 +22,8 @@ export interface RuntimeEvent {
     | "steer"
     | "process"
     | "process_output"
-    | "model_status";
+    | "model_status"
+    | "runtime_progress";
   thread_id?: string;
   task_id?: string;
   data?: HarnessChunk;
@@ -44,6 +45,7 @@ export interface RuntimeEvent {
   stream?: "stdout" | "stderr";
   content?: string;
   tool_call_id?: string;
+  phase?: string;
 }
 export interface RuntimeStart {
   task_id: string;
@@ -83,6 +85,12 @@ export interface DesktopRuntimeBridge {
     execute_authorized?: boolean;
   }>;
   start(params: RuntimeStart): Promise<{ task_id: string }>;
+  createThread?(params: { agent_id: string }): Promise<{
+    thread_id: string;
+    session_key: string;
+    execution_mode: "local";
+    continuation_of_thread_id?: string | null;
+  }>;
   cancel(params: { thread_id: string }): Promise<{ status: string }>;
   resumeHitl?(params: {
     thread_id: string;
@@ -170,6 +178,7 @@ export function matchesRuntimeTask(
   threadId: string,
   taskId?: string,
 ): boolean {
+  if (event.event === "runtime_progress") return true;
   return (
     event.thread_id === threadId &&
     (!taskId || !event.task_id || event.task_id === taskId)

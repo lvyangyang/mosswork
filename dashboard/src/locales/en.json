@@ -1408,6 +1408,8 @@
     "continuing": "Continuing",
     "generating": "Generating",
     "preparingLocalTask": "Preparing local task",
+    "preparingLocalTools": "Verifying local tools",
+    "preparingLocalRuntime": "Starting local runtime",
     "generatingWithElapsed": "Generating · {{seconds}}s",
     "membersResponding": "Members responding",
     "memberResponding": "{{name}} is responding",

@@ -37,6 +37,10 @@ func TestRuntimeIPCRejectsStaleAndUnsupportedRequests(t *testing.T) {
 			t.Fatal("steer request accepted after account change")
 		}
 	}
+	request := "desktop:runtime:session:4:create_thread:" + url.QueryEscape(`{"agent_id":"expert"}`)
+	if _, method, _, ok := parseRuntimeEvent(request, "session"); !ok || method != "create_thread" {
+		t.Fatal("create_thread request rejected")
+	}
 }
 
 func TestRuntimeModelFailureMessages(t *testing.T) {

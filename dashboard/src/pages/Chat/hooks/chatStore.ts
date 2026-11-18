@@ -495,6 +495,7 @@ function buildSnapshot(state: SessionStreamState): SessionSnapshot {
     modelStatus: state.modelStatus,
     streamStalled: state.streamStalled,
     localPreparing: state.localPreparing ?? false,
+    localPreparingPhase: state.localPreparingPhase,
     thinkingStartedAt: state.thinkingStartedAt,
     runUsage: state.runUsage,
     contextUsage: state.contextUsage,
@@ -656,6 +657,7 @@ function clearStreamingFlags(
   state.modelStatus = null;
   state.streamStalled = false;
   state.localPreparing = false;
+  state.localPreparingPhase = undefined;
   state.thinkingStartedAt = null;
   if (opts?.keepSteer) return;
   state.activeTurnId = null;
@@ -3466,6 +3468,7 @@ export async function sendTurn(
         editingLocalSessions.delete(sessionId);
       }
       state.localPreparing = false;
+      state.localPreparingPhase = undefined;
     };
     try {
       if (
@@ -3584,8 +3587,12 @@ export async function sendTurn(
         },
         (event) => {
           if (state.abortController !== controller) return;
-          markStarted();
+          if (event.event !== "runtime_progress") markStarted();
           touchStreamActivity(sessionId);
+          if (event.event === "runtime_progress") {
+            state.localPreparingPhase = event.phase;
+            notify(state);
+          }
           if (applyModelStatusEvent(state, event)) notify(state);
           if (event.event === "process_output") {
             applyLocalProcessOutput(state, event);

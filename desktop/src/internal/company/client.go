@@ -3,9 +3,11 @@
 package company
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -378,4 +380,41 @@ func (c *Client) RuntimeIdentity() (Status, string, error) {
 		return Status{}, "", errors.New("本地设备未连接公司服务，请在设置中重新连接")
 	}
 	return c.status, c.credential, nil
+}
+
+// CompanyPost performs one native-only authenticated request to the company
+// service. The caller supplies the request context so slow requests can be
+// bounded independently from the device WebSocket lifecycle.
+func (c *Client) CompanyPost(ctx context.Context, base, path string, body []byte) (int, []byte, error) {
+	_, credential, err := c.RuntimeIdentity()
+	if err != nil {
+		return 0, nil, err
+	}
+	if _, err := BaseURL(base); err != nil {
+		return 0, nil, err
+	}
+	if path == "" || path[0] != '/' {
+		return 0, nil, errors.New("invalid company service path")
+	}
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		strings.TrimRight(base, "/")+path,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-mosswork-Device-Credential", credential)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, data, nil
 }
