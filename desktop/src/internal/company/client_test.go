@@ -45,7 +45,7 @@ func TestCompanyPostUsesCurrentDeviceCredentialAndBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	defer client.Close(false)
 	client.httpClient.Transport = server.Client().Transport
 	client.status = Status{State: "online", DeviceID: "device", OwnerUserID: 7, ExpiresAt: time.Now().Add(time.Hour).Unix()}
@@ -70,7 +70,7 @@ func TestCompanyPostHonorsContextTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient()
+	client := NewClient(t.TempDir())
 	defer client.Close(false)
 	client.status = Status{State: "online", DeviceID: "device", OwnerUserID: 7, ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	client.credential = "mosswork-device.test"

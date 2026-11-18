@@ -49,7 +49,7 @@ func companyThreadTestApp(t *testing.T, handler http.HandlerFunc) (*App, *httpte
 			}
 		}
 	}))
-	client := company.NewClient()
+	client := company.NewClient(t.TempDir())
 	if err := client.Pair(context.Background(), server.URL, "mosswork-pair.test", "test", runtime.GOOS); err != nil {
 		server.Close()
 		t.Fatal(err)
