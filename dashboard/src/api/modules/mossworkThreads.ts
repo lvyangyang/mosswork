@@ -1,4 +1,5 @@
 import type { HitlPendingPayload, HitlSessionPolicy } from "../types/hitl";
+import { isCompanyDesktop } from "../desktopRuntime";
 import { request } from "../request";
 
 /** Workspace file produced in a thread; ``agent_id`` is the producer. */
@@ -188,15 +189,20 @@ export const mossworkThreadsApi = {
       `/agents/${encodeURIComponent(agentId)}/threads?limit=${limit}`,
     ),
 
-  create: (agentId: string, executionMode: "server" = "server") =>
-    request<{
+  create: (agentId: string, executionMode: "server" = "server") => {
+    const runtime = window.__mossworkRuntime;
+    if (isCompanyDesktop() && runtime?.createThread) {
+      return runtime.createThread({ agent_id: agentId });
+    }
+    return request<{
       thread_id: string;
       session_key: string;
       execution_mode: "server" | "local";
     }>(`/agents/${encodeURIComponent(agentId)}/threads`, {
       method: "POST",
       body: JSON.stringify({ execution_mode: executionMode }),
-    }),
+    });
+  },
 
   continueServer: (agentId: string, threadId: string) =>
     request<{

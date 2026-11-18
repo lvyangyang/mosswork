@@ -33,6 +33,15 @@ function mountConnectionPanel(config) {
   });
   const runtimePending = new Map();
   const runtimeListeners = new Set();
+  const extendRuntimeTimeouts = () => {
+    for (const [id, call] of runtimePending) {
+      clearTimeout(call.timer);
+      call.timer = setTimeout(() => {
+        runtimePending.delete(id);
+        call.reject(new Error("本地运行时响应超时；请核对任务状态后重试"));
+      }, 60000);
+    }
+  };
   function runtimeRequest(method, params = {}) {
     return new Promise((resolve, reject) => {
       const id = String(++sequence);
@@ -49,13 +58,16 @@ function mountConnectionPanel(config) {
     if (result.error) call.reject(new Error(result.error)); else call.resolve(result.result);
   };
   window.__mossworkRuntimeEvent = (nonce, event) => {
-    if (nonce === config.nonce) for (const listener of runtimeListeners) listener(event);
+    if (nonce !== config.nonce) return;
+    if (event?.event === "runtime_progress") extendRuntimeTimeouts();
+    for (const listener of runtimeListeners) listener(event);
   };
   window.__mossworkRuntime = Object.freeze({
     version: 1,
     status: (options) => runtimeRequest("status", options),
     refreshStatus: () => runtimeRequest("refresh_status"),
     start: params => runtimeRequest("start", params),
+    createThread: params => runtimeRequest("create_thread", params),
     cancel: params => runtimeRequest("cancel", params),
     steer: params => runtimeRequest("steer", params),
     removeSteer: params => runtimeRequest("steer_remove", params),

@@ -591,6 +591,7 @@ export function useSessions(agentId: string | null) {
           created_at: now,
           channel_type: "dashboard",
           agent_id: agentId,
+          execution_mode: created.execution_mode,
         });
         setModuleSessions((prev) =>
           sortSessions([

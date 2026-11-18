@@ -34,7 +34,7 @@ func parseRuntimeEvent(name, nonce string) (id, method string, params json.RawMe
 		return
 	}
 	switch p[2] {
-	case "status", "refresh_status", "start", "cancel", "reveal", "reconcile", "preview_image", "steer", "steer_remove", "hitl_resume", "upload_artifact", "import_attachment":
+	case "status", "refresh_status", "start", "cancel", "reveal", "reconcile", "preview_image", "steer", "steer_remove", "hitl_resume", "upload_artifact", "import_attachment", "create_thread":
 	default:
 		return
 	}
@@ -106,6 +106,10 @@ func (a *App) performRuntimeAction(nonce, base, method string, params json.RawMe
 	if method == "upload_artifact" || method == "import_attachment" {
 		a.companyMu.Unlock()
 		return a.transferRuntimeArtifact(nonce, base, method, params)
+	}
+	if method == "create_thread" {
+		a.companyMu.Unlock()
+		return a.companyCreateThread(nonce, base, params)
 	}
 	if method == "preview_image" {
 		var p struct {
@@ -216,6 +220,7 @@ func (a *App) ensureRuntimeProcess(nonce, base, method string, prepare func() (s
 		}
 		workspace, epoch := a.workspacePath, a.runtimeEpoch
 		a.companyMu.Unlock()
+		a.emitRuntimeProgress(nonce, base, epoch, "tools")
 		root, err := prepare()
 		if err != nil {
 			return nil, err
@@ -255,6 +260,7 @@ func (a *App) ensureRuntimeProcess(nonce, base, method string, prepare func() (s
 		a.companyRuntime = process
 		go a.watchRuntimeIdentity(nonce, base, epoch, identity.ExpiresAt)
 		a.companyMu.Unlock()
+		a.emitRuntimeProgress(nonce, base, epoch, "runtime")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_, err = process.Request(ctx, "initialize", map[string]any{"company_url": base, "credential": credential, "device_id": identity.DeviceID, "owner_user_id": identity.OwnerUserID, "workspace": workspace, "state_dir": stateDir, "execute_authorized": true})
 		cancel()
@@ -282,6 +288,14 @@ func (a *App) ensureRuntimeProcess(nonce, base, method string, prepare func() (s
 	a.companyMu.Unlock()
 	return process, nil
 }
+
+func (a *App) emitRuntimeProgress(nonce, base string, epoch uint64, phase string) {
+	a.deliverRuntimeEvent(nonce, base, epoch, companyruntime.Message{
+		Event: "runtime_progress",
+		Phase: phase,
+	})
+}
+
 func applyRuntimeErrorTranslation(m companyruntime.Message) companyruntime.Message {
 	if m.Error != "" {
 		m.ErrorCode = m.Error
@@ -337,6 +351,9 @@ func (a *App) watchRuntimeIdentity(nonce, base string, epoch uint64, expires int
 
 func runtimeErrorText(code string) string {
 	messages := map[string]string{
+		"execution_mode_server":                  "此会话已在网页端使用，请新建会话进行本机执行",
+		"server_thread_running":                  "此会话正在服务器执行，请等待完成后再试",
+		"project_binding_required":               "会话缺少本地项目绑定，请更新公司服务端后重试",
 		"company_runtime_disabled":               "公司尚未启用本机执行服务，请联系管理员开启；通讯录和员工聊天仍可使用。",
 		"company_protocol_incompatible":          "公司服务与客户端运行协议不兼容，请安装匹配的企业客户端。",
 		"device_session_expired":                 "当前设备连接已过期，请重新登录公司账号。",
