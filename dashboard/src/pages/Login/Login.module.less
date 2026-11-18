@@ -1,5 +1,11 @@
 .tabs {
   width: 100%;
+
+  :global(.mosswork-tabs-tab-btn),
+  :global(.ant-tabs-tab-btn) {
+    font-size: 16px;
+    font-weight: 600;
+  }
 }
 
 .form {
@@ -7,4 +13,27 @@
   flex-direction: column;
   gap: 20px;
   width: 100%;
+}
+
+.submitButton {
+  &:global(.mosswork-btn-primary),
+  &:global(.ant-btn-primary) {
+    color: #fff !important;
+    font-weight: 600 !important;
+    text-shadow: 0 1px 1px rgb(0 0 0 / 12%);
+  }
+
+  &:global(.mosswork-btn-primary:disabled),
+  &:global(.mosswork-btn-primary.mosswork-btn-disabled),
+  &:global(.ant-btn-primary:disabled),
+  &:global(.ant-btn-primary.ant-btn-disabled) {
+    color: rgb(255 255 255 / 92%) !important;
+    opacity: 1 !important;
+    background: color-mix(
+      in srgb,
+      var(--fn-color-brand) 48%,
+      var(--fn-border-primary)
+    ) !important;
+    border-color: transparent !important;
+  }
 }

@@ -64,6 +64,7 @@ describe("index.html boot theme", () => {
     );
     eval(bootThemeScript());
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(document.documentElement.getAttribute("data-palette")).toBe("amber");
   });
 
   it("honors a stored dark preference", () => {
@@ -74,11 +75,13 @@ describe("index.html boot theme", () => {
     );
     eval(bootThemeScript());
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(document.documentElement.getAttribute("data-palette")).toBe("amber");
   });
 
   it("follows the OS when preference is system or missing", () => {
     eval(bootThemeScript());
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(document.documentElement.getAttribute("data-palette")).toBe("amber");
 
     document.documentElement.removeAttribute("data-theme");
     stubMatchMedia(false);

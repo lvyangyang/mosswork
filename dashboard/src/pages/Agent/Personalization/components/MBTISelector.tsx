@@ -304,7 +304,10 @@ export default function MBTISelector({
       })
       .catch(() => message.error(t("personalization.mbti.loadFailed")))
       .finally(() => setLoading(false));
-  }, [t, targetAgentId]);
+    // Loading the catalogue depends on the agent, not on the translated error copy.
+    // Some i18n adapters recreate `t` on every render, which would otherwise refetch forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetAgentId]);
 
   const handleCardClick = useCallback((type: MBTIType) => {
     setSelectedType(type);

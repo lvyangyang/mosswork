@@ -25,13 +25,13 @@ function contrastRatio(foreground: string, background: string): number {
 describe("theme palettes", () => {
   it("exposes the curated palette set", () => {
     expect(VALID_PALETTES).toEqual([
+      "amber",
       "rose",
       "tech",
       "indigo",
       "teal",
       "violet",
       "emerald",
-      "amber",
       "slate",
     ]);
   });

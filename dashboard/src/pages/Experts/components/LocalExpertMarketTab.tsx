@@ -91,6 +91,7 @@ export default function LocalExpertMarketTab({
           allowClear
         />
         <Button
+          aria-label={t("common.refresh")}
           icon={<RefreshCw size={14} />}
           onClick={() => void load()}
           loading={loading}

@@ -1,6 +1,6 @@
 /* ===================================================================
    mosswork Design System v3 – CSS Custom Properties
-   Default brand: Elegant Rose #E85D75
+   Default brand: Sudowork Orange #F97316
    Palettes via html[data-palette="rose|tech|indigo|teal|violet|emerald|amber|slate"]
    Mode via html[data-theme="light|dark"]
    =================================================================== */
@@ -8,6 +8,20 @@
 /* ---------- LIGHT THEME ---------- */
 :root,
 html[data-theme="light"] {
+  /* ---- Shared geometry / typography scale (Sudowork) ---- */
+  --fn-space-1: 4px;
+  --fn-space-2: 8px;
+  --fn-space-3: 12px;
+  --fn-space-4: 16px;
+  --fn-space-5: 20px;
+  --fn-space-6: 24px;
+  --fn-space-8: 32px;
+  --fn-text-xs: 10px;
+  --fn-text-sm: 12px;
+  --fn-text-base: 14px;
+  --fn-text-lg: 16px;
+  --fn-text-xl: 18px;
+  --fn-text-2xl: 24px;
   /* ---- Backgrounds ---- */
   --fn-bg-primary: #ffffff;
   --fn-bg-secondary: #f7f8fa;
@@ -38,6 +52,9 @@ html[data-theme="light"] {
   --fn-surface-sunken: #f7f8fa;
   --fn-fill-hover: rgba(0, 0, 0, 0.04);
   --fn-fill-tertiary: #f2f3f5;
+  --fn-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Inter", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --fn-font-family-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
 
   /* ---- Text ---- */
   --fn-text-primary: #111827;
@@ -183,10 +200,10 @@ html[data-theme="light"] {
   --fn-transition-spring: 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* ---- Radius ---- */
-  --fn-radius-sm: 5px;
+  --fn-radius-sm: 6px;
   --fn-radius-md: 8px;
   --fn-radius-lg: 12px;
-  --fn-radius-xl: 18px;
+  --fn-radius-xl: 16px;
   --fn-radius-full: 9999px;
 }
 
@@ -222,6 +239,9 @@ html[data-theme="dark"] {
   --fn-surface-sunken: #1a1a1a;
   --fn-fill-hover: rgba(255, 255, 255, 0.08);
   --fn-fill-tertiary: rgba(255, 255, 255, 0.06);
+  --fn-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Inter", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --fn-font-family-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
 
   /* ---- Text ---- */
   --fn-text-primary: rgba(255, 255, 255, 0.9);
@@ -370,7 +390,7 @@ html[data-theme="dark"] {
 
 /* ===================================================================
    Brand palettes — override only brand-tinted tokens
-   Default / data-palette="rose" uses the light/dark blocks above.
+   Curated palettes override the default Sudowork surface tokens below.
    =================================================================== */
 
 /* ---------- TECH (#4B74FA) ---------- */
@@ -729,74 +749,77 @@ html[data-palette="emerald"][data-theme="dark"] {
 }
 
 /* ---------- AMBER (#F59E0B) ---------- */
-html[data-palette="amber"]:not([data-theme="dark"]) {
-  --fn-bg-hover: rgba(245, 158, 11, 0.04);
-  --fn-bg-active: rgba(245, 158, 11, 0.08);
-  --fn-bg-selected: rgba(245, 158, 11, 0.06);
-  --fn-text-brand: #b45309;
-  --fn-logo-color: #b45309;
-  --fn-border-focus: #b45309;
-  --fn-color-brand: #b45309;
-  --fn-color-brand-hover: #92400e;
-  --fn-color-brand-soft: #92400e;
-  --fn-color-brand-bg: rgba(245, 158, 11, 0.06);
-  --fn-color-brand-light: #fffbeb;
-  --fn-color-brand-shadow: rgba(245, 158, 11, 0.15);
-  --fn-color-brand-glow: rgba(245, 158, 11, 0.08);
+html[data-palette="amber"]:not([data-theme="dark"]),
+:root:not([data-palette]),
+html[data-theme="light"]:not([data-palette]) {
+  --fn-bg-hover: rgba(249, 115, 22, 0.05);
+  --fn-bg-active: rgba(249, 115, 22, 0.1);
+  --fn-bg-selected: rgba(249, 115, 22, 0.08);
+  --fn-text-brand: #ea580c;
+  --fn-logo-color: #f97316;
+  --fn-border-focus: #f97316;
+  --fn-color-brand: #f97316;
+  --fn-color-brand-hover: #ea580c;
+  --fn-color-brand-soft: #f97316;
+  --fn-color-brand-bg: rgba(249, 115, 22, 0.08);
+  --fn-color-brand-light: #fff1e8;
+  --fn-color-brand-shadow: rgba(249, 115, 22, 0.18);
+  --fn-color-brand-glow: rgba(249, 115, 22, 0.1);
   --fn-assistant-bubble-bg-gradient: linear-gradient(
     135deg,
-    rgba(255, 251, 235, 0.7) 0%,
+    rgba(255, 241, 232, 0.75) 0%,
     rgba(255, 255, 255, 0.35) 50%,
-    rgba(254, 243, 199, 0.45) 100%
+    rgba(254, 215, 190, 0.45) 100%
   );
-  --fn-assistant-bubble-border: rgba(245, 158, 11, 0.14);
-  --fn-assistant-glow-color: 245, 158, 11;
-  --fn-tag-channel-text: #b45309;
-  --fn-shadow-brand: 0 4px 14px rgba(245, 158, 11, 0.18);
-  --fn-shadow-brand-lg: 0 8px 24px rgba(245, 158, 11, 0.24);
-  --fn-row-selected-bg: rgba(245, 158, 11, 0.05);
-  --fn-row-selected-hover: rgba(245, 158, 11, 0.09);
-  --fn-row-selected-alt-bg: rgba(245, 158, 11, 0.04);
-  --fn-row-selected-alt-hover: rgba(245, 158, 11, 0.08);
-  --fn-row-selected-border: #b45309;
-  --fn-sidebar-item-active-bg: #fffbeb;
-  --fn-sidebar-item-active: rgba(245, 158, 11, 0.08);
-  --fn-sidebar-item-active-text: #b45309;
+  --fn-assistant-bubble-border: rgba(249, 115, 22, 0.16);
+  --fn-assistant-glow-color: 249, 115, 22;
+  --fn-tag-channel-text: #ea580c;
+  --fn-shadow-brand: 0 4px 14px rgba(249, 115, 22, 0.18);
+  --fn-shadow-brand-lg: 0 8px 24px rgba(249, 115, 22, 0.24);
+  --fn-row-selected-bg: rgba(249, 115, 22, 0.06);
+  --fn-row-selected-hover: rgba(249, 115, 22, 0.1);
+  --fn-row-selected-alt-bg: rgba(249, 115, 22, 0.05);
+  --fn-row-selected-alt-hover: rgba(249, 115, 22, 0.09);
+  --fn-row-selected-border: #f97316;
+  --fn-sidebar-item-active-bg: #fff1e8;
+  --fn-sidebar-item-active: rgba(249, 115, 22, 0.1);
+  --fn-sidebar-item-active-text: #ea580c;
 }
 
-html[data-palette="amber"][data-theme="dark"] {
-  --fn-bg-hover: rgba(245, 158, 11, 0.1);
-  --fn-bg-active: rgba(245, 158, 11, 0.16);
-  --fn-bg-selected: rgba(245, 158, 11, 0.12);
-  --fn-text-brand: #fbbf24;
-  --fn-logo-color: #fbbf24;
-  --fn-border-focus: #fbbf24;
-  --fn-color-brand: #b45309;
-  --fn-color-brand-hover: #92400e;
-  --fn-color-brand-soft: #92400e;
-  --fn-color-brand-bg: rgba(245, 158, 11, 0.14);
-  --fn-color-brand-light: rgba(245, 158, 11, 0.18);
-  --fn-color-brand-shadow: rgba(245, 158, 11, 0.28);
-  --fn-color-brand-glow: rgba(245, 158, 11, 0.1);
+html[data-palette="amber"][data-theme="dark"],
+html[data-theme="dark"]:not([data-palette]) {
+  --fn-bg-hover: rgba(249, 115, 22, 0.1);
+  --fn-bg-active: rgba(249, 115, 22, 0.16);
+  --fn-bg-selected: rgba(249, 115, 22, 0.12);
+  --fn-text-brand: #fb923c;
+  --fn-logo-color: #f97316;
+  --fn-border-focus: #fb923c;
+  --fn-color-brand: #f97316;
+  --fn-color-brand-hover: #fb923c;
+  --fn-color-brand-soft: #fb923c;
+  --fn-color-brand-bg: rgba(249, 115, 22, 0.16);
+  --fn-color-brand-light: rgba(249, 115, 22, 0.2);
+  --fn-color-brand-shadow: rgba(249, 115, 22, 0.28);
+  --fn-color-brand-glow: rgba(249, 115, 22, 0.12);
   --fn-assistant-bubble-bg-gradient: linear-gradient(
     135deg,
-    rgba(251, 191, 36, 0.12) 0%,
+    rgba(249, 115, 22, 0.12) 0%,
     rgba(255, 255, 255, 0.04) 50%,
-    rgba(251, 191, 36, 0.08) 100%
+    rgba(249, 115, 22, 0.08) 100%
   );
-  --fn-assistant-bubble-border: rgba(251, 191, 36, 0.16);
-  --fn-assistant-glow-color: 251, 191, 36;
-  --fn-tag-channel-text: #fbbf24;
-  --fn-shadow-brand: 0 4px 14px rgba(245, 158, 11, 0.24);
-  --fn-shadow-brand-lg: 0 8px 24px rgba(245, 158, 11, 0.32);
-  --fn-row-selected-bg: rgba(245, 158, 11, 0.12);
-  --fn-row-selected-hover: rgba(245, 158, 11, 0.18);
-  --fn-row-selected-alt-bg: rgba(245, 158, 11, 0.1);
-  --fn-row-selected-alt-hover: rgba(245, 158, 11, 0.15);
-  --fn-row-selected-border: #fbbf24;
-  --fn-sidebar-item-active-bg: rgba(245, 158, 11, 0.16);
-  --fn-sidebar-item-active: rgba(245, 158, 11, 0.16);
-  --fn-sidebar-item-active-text: #fbbf24;
+  --fn-assistant-bubble-border: rgba(249, 115, 22, 0.16);
+  --fn-assistant-glow-color: 249, 115, 22;
+  --fn-tag-channel-text: #fb923c;
+  --fn-shadow-brand: 0 4px 14px rgba(249, 115, 22, 0.24);
+  --fn-shadow-brand-lg: 0 8px 24px rgba(249, 115, 22, 0.32);
+  --fn-row-selected-bg: rgba(249, 115, 22, 0.12);
+  --fn-row-selected-hover: rgba(249, 115, 22, 0.18);
+  --fn-row-selected-alt-bg: rgba(249, 115, 22, 0.1);
+  --fn-row-selected-alt-hover: rgba(249, 115, 22, 0.15);
+  --fn-row-selected-border: #fb923c;
+  --fn-sidebar-item-active-bg: rgba(249, 115, 22, 0.16);
+  --fn-sidebar-item-active: rgba(249, 115, 22, 0.16);
+  --fn-sidebar-item-active-text: #fb923c;
 }
 
 /* ---------- SLATE (#64748B) ---------- */
@@ -868,6 +891,65 @@ html[data-palette="slate"][data-theme="dark"] {
   --fn-sidebar-item-active-bg: rgba(148, 163, 184, 0.16);
   --fn-sidebar-item-active: rgba(148, 163, 184, 0.16);
   --fn-sidebar-item-active-text: #94a3b8;
+}
+
+/* ---------- SUDOWORK DEFAULT SURFACE ----------
+   Keep palette choices available, while making the default amber palette use
+   Sudowork's warm neutral workbench surfaces and compact geometry. */
+html[data-palette="amber"]:not([data-theme="dark"]) {
+  --fn-bg-primary: #fffffe;
+  --fn-bg-secondary: #f5f4ef;
+  --fn-bg-tertiary: #eeede5;
+  --fn-bg-elevated: #fffffe;
+  --fn-bg-layout: #f5f4ef;
+  --fn-bg-container: #fffffe;
+  --fn-bg-page: #f5f4ef;
+  --fn-bg-subtle: #f7f6f1;
+  --fn-surface: #fffffe;
+  --fn-surface-sunken: #f5f4ef;
+  --fn-text-primary: #1d011d;
+  --fn-text-secondary: #6e6060;
+  --fn-text-tertiary: #9e9490;
+  --fn-border-primary: #e0dbd0;
+  --fn-border-secondary: #e3ded2;
+  --fn-border-input: #d7d1c5;
+  --fn-border: #e0dbd0;
+  --fn-border-color: #e0dbd0;
+  --fn-border-strong: #cbc8b8;
+  --fn-sidebar-bg: #fffffe;
+  --fn-sidebar-border: #e0dbd0;
+  --fn-sidebar-item-hover: #ebe9df;
+  --fn-sidebar-item-active-bg: #f6ecd6;
+  --fn-header-bg: #fffffe;
+  --fn-card-border-normal: #e0dbd0;
+  --fn-card-radius: 8px;
+}
+
+html[data-palette="amber"][data-theme="dark"] {
+  --fn-bg-primary: #18180f;
+  --fn-bg-secondary: #202018;
+  --fn-bg-tertiary: #29291f;
+  --fn-bg-elevated: #202018;
+  --fn-bg-layout: #18180f;
+  --fn-bg-container: #202018;
+  --fn-bg-page: #18180f;
+  --fn-bg-subtle: #202018;
+  --fn-surface: #202018;
+  --fn-surface-sunken: #18180f;
+  --fn-text-primary: #e8e6d8;
+  --fn-text-secondary: #a8a498;
+  --fn-text-tertiary: #898a7a;
+  --fn-border-primary: rgba(232, 230, 216, 0.14);
+  --fn-border-secondary: rgba(232, 230, 216, 0.08);
+  --fn-border-input: rgba(232, 230, 216, 0.2);
+  --fn-border: rgba(232, 230, 216, 0.14);
+  --fn-border-color: rgba(232, 230, 216, 0.14);
+  --fn-border-strong: rgba(232, 230, 216, 0.24);
+  --fn-sidebar-bg: #18180f;
+  --fn-sidebar-border: rgba(232, 230, 216, 0.14);
+  --fn-header-bg: #18180f;
+  --fn-card-border-normal: rgba(232, 230, 216, 0.14);
+  --fn-card-radius: 8px;
 }
 
 /* ---------- GLOBAL RESET & TRANSITIONS ---------- */

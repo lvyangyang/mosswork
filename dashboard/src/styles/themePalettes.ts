@@ -12,20 +12,21 @@ export type ThemePalette =
   | "custom";
 
 export const VALID_PALETTES: ThemePalette[] = [
+  "amber",
   "rose",
   "tech",
   "indigo",
   "teal",
   "violet",
   "emerald",
-  "amber",
   "slate",
 ];
 
 /** Curated palettes only — "custom" is handled separately via a hex value. */
 export const CURATED_PALETTES: ThemePalette[] = [...VALID_PALETTES];
 
-export const DEFAULT_PALETTE: ThemePalette = "rose";
+/** Default brand follows the warm orange accent used by Sudowork UI. */
+export const DEFAULT_PALETTE: ThemePalette = "amber";
 export const DEFAULT_CUSTOM_COLOR = "#4B74FA";
 
 /** True when the value is one of the curated palette keys (not "custom"/hex). */
@@ -50,7 +51,7 @@ export const PALETTE_SWATCH: Record<ThemePalette, string> = {
   teal: "#0D9488",
   violet: "#7C3AED",
   emerald: "#10B981",
-  amber: "#F59E0B",
+  amber: "#F97316",
   slate: "#64748B",
   custom: DEFAULT_CUSTOM_COLOR, // live swatch is provided by the picker UI
 };
@@ -202,23 +203,23 @@ export const ANTD_BRAND_TOKENS: Record<
   },
   amber: {
     light: {
-      colorPrimary: "#B45309",
-      colorPrimaryHover: "#92400E",
-      colorPrimaryActive: "#78350F",
-      colorLink: "#B45309",
+      colorPrimary: "#C2410C",
+      colorPrimaryHover: "#9A3412",
+      colorPrimaryActive: "#7C2D12",
+      colorLink: "#C2410C",
     },
     dark: {
-      colorPrimary: "#B45309",
-      colorPrimaryBg: "rgba(245, 158, 11, 0.14)",
-      colorPrimaryBgHover: "rgba(245, 158, 11, 0.2)",
-      colorPrimaryBorder: "rgba(245, 158, 11, 0.3)",
-      colorPrimaryBorderHover: "rgba(245, 158, 11, 0.4)",
-      colorPrimaryHover: "#92400E",
-      colorPrimaryActive: "#78350F",
+      colorPrimary: "#C2410C",
+      colorPrimaryBg: "rgba(249, 115, 22, 0.14)",
+      colorPrimaryBgHover: "rgba(249, 115, 22, 0.2)",
+      colorPrimaryBorder: "rgba(249, 115, 22, 0.3)",
+      colorPrimaryBorderHover: "rgba(249, 115, 22, 0.4)",
+      colorPrimaryHover: "#9A3412",
+      colorPrimaryActive: "#C2410C",
       colorPrimaryText: "#FBBF24",
       colorPrimaryTextHover: "#FCD34D",
-      colorPrimaryTextActive: "#F59E0B",
-      colorLink: "#FBBF24",
+      colorPrimaryTextActive: "#F97316",
+      colorLink: "#FB923C",
     },
   },
   slate: {

@@ -1,4 +1,3 @@
-import { productLogo } from "../utils/branding";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -6,10 +5,8 @@ import { visibleConversations } from "../pages/Messaging/communicationUi";
 import { useCommunication } from "../pages/Messaging/hooks/CommunicationContext";
 import type { TFunction } from "i18next";
 import AvatarDropdown from "../components/AvatarDropdown";
-import AppVersionBadge from "../components/AppVersionBadge";
-import EnterpriseBadge from "../components/EnterpriseBadge";
+import BrandLockup from "../components/BrandLockup";
 import { ArrowRightLeft, ChevronDown, X } from "lucide-react";
-import { useTheme } from "../context/ThemeContext";
 import { useLayoutMode } from "../context/LayoutModeContext";
 import { useUserRole } from "../hooks/useUserRole";
 import { useCurrentUser, useSetCurrentUser } from "../hooks/useCurrentUser";
@@ -152,7 +149,7 @@ function NavItemButton({
 
   return (
     <div
-      className={styles.navItemRow}
+      className={`${styles.navItemRow} ${active ? styles.navItemActive : ""}`}
       style={{
         background: active ? "var(--fn-sidebar-item-active-bg)" : "transparent",
       }}
@@ -414,7 +411,6 @@ export default function Sidebar({
   const conversationPath = useConversationNavigation();
   const location = useLocation();
   const { t } = useTranslation();
-  const { isDark } = useTheme();
   const role = useUserRole();
   const user = useCurrentUser();
   const setUser = useSetCurrentUser();
@@ -475,8 +471,6 @@ export default function Sidebar({
   const showChatRailExpand = !isMinimal && !chatSidebarOpen;
 
   const isRailCollapsed = collapsed && !isMobile;
-  const wordmarkSrc = productLogo(isDark);
-
   const selectMinimalPane = useCallback(
     (pane: MinimalNavPane, opts?: { expand?: boolean }) => {
       setMinimalPane(pane);
@@ -529,27 +523,11 @@ export default function Sidebar({
   ]);
 
   const brandInner = (
-    <>
-      <img
-        src={isRailCollapsed ? "/pwa-192.png" : wordmarkSrc}
-        alt={t("app.productName")}
-        style={{
-          height: isRailCollapsed ? 32 : isMobile ? 38 : 36,
-          width: isRailCollapsed ? 32 : "auto",
-          maxWidth: isRailCollapsed ? 32 : isMobile ? 190 : 160,
-          objectFit: "contain",
-          display: "block",
-          flexShrink: 0,
-          borderRadius: isRailCollapsed ? 8 : undefined,
-        }}
-      />
-      {!isRailCollapsed && !isMobile && (
-        <>
-          <EnterpriseBadge isMobile={isMobile} />
-          <AppVersionBadge isMobile={isMobile} />
-        </>
-      )}
-    </>
+    <BrandLockup
+      compact={isRailCollapsed}
+      showEnterprise={!isRailCollapsed && !isMobile}
+      showVersion={!isRailCollapsed && !isMobile}
+    />
   );
 
   const userFooter = (

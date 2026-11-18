@@ -19,7 +19,7 @@ import {
   useCanonicalIdentity,
 } from "../../hooks/useCanonicalIdentity";
 import { parseApiError } from "../../utils/apiError";
-import { productLogo } from "../../utils/branding";
+import BrandLockup from "../../components/BrandLockup";
 import { CanonicalProfilePanel } from "./CanonicalProfilePanel";
 import { CanonicalOrganizationPanel } from "./CanonicalOrganizationPanel";
 import { showsOrganizationDirectory } from "../../hooks/useCanonicalOrganization";
@@ -291,12 +291,7 @@ export function CanonicalAccountScreen({
               : 440,
         }}
       >
-        <img
-          src={productLogo(false)}
-          alt="Mosswork"
-          height={36}
-          style={{ marginBottom: 24 }}
-        />
+        <BrandLockup showEnterprise />
         {session.isLoading || (session.isPending && session.hasAccessToken) ? (
           <Spin />
         ) : session.identity ? (

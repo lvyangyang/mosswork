@@ -8,8 +8,10 @@ body {
   overflow: hidden;
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
-    "Noto Sans SC", sans-serif;
+  font-family: var(--fn-font-family);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
@@ -85,6 +87,121 @@ html[data-mosswork-desktop-chrome] .ant-drawer-right .ant-drawer-close {
 .mosswork-app,
 .ant-app {
   height: 100%;
+}
+
+/* Keep every Ant Design switch on the active Sudowork brand accent. */
+.mosswork-switch-checked,
+.ant-switch-checked {
+  background: var(--fn-color-brand) !important;
+}
+
+.mosswork-switch-checked:hover,
+.ant-switch-checked:hover {
+  background: var(--fn-color-brand-hover) !important;
+}
+
+/* Checkboxes, segmented controls, and selected rows share the switch accent. */
+.mosswork-checkbox-checked .mosswork-checkbox-inner,
+.ant-checkbox-checked .ant-checkbox-inner {
+  background: var(--fn-color-brand) !important;
+  border-color: var(--fn-color-brand) !important;
+}
+
+.mosswork-checkbox-wrapper:hover .mosswork-checkbox-inner,
+.ant-checkbox-wrapper:hover .ant-checkbox-inner,
+.mosswork-checkbox:hover .mosswork-checkbox-inner,
+.ant-checkbox:hover .ant-checkbox-inner {
+  border-color: var(--fn-color-brand-hover) !important;
+}
+
+.mosswork-segmented-item-selected,
+.ant-segmented-item-selected {
+  background: var(--fn-color-brand-light) !important;
+  color: var(--fn-color-brand-soft) !important;
+  box-shadow: var(--fn-shadow-xs) !important;
+}
+
+.mosswork-segmented-item:hover:not(.mosswork-segmented-item-selected),
+.ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+  color: var(--fn-color-brand) !important;
+}
+
+.mosswork-tabs-tab-active .mosswork-tabs-tab-btn,
+.ant-tabs-tab-active .ant-tabs-tab-btn,
+.mosswork-tabs-tab:hover,
+.ant-tabs-tab:hover {
+  color: var(--fn-color-brand) !important;
+}
+
+.mosswork-tabs-ink-bar,
+.ant-tabs-ink-bar {
+  background: var(--fn-color-brand) !important;
+}
+
+.mosswork-table-row-selected > td,
+.ant-table-row-selected > td {
+  background: var(--fn-row-selected-bg) !important;
+}
+
+.mosswork-table-row-selected:hover > td,
+.ant-table-row-selected:hover > td {
+  background: var(--fn-row-selected-hover) !important;
+}
+
+/* Alerts and inline notices use the same warm brand language as controls. */
+.mosswork-alert-info,
+.ant-alert-info {
+  background: var(--fn-color-brand-bg) !important;
+  border-color: var(--fn-color-brand-border) !important;
+}
+
+.mosswork-alert-info .mosswork-alert-message,
+.mosswork-alert-info .mosswork-alert-description,
+.ant-alert-info .ant-alert-message,
+.ant-alert-info .ant-alert-description,
+.mosswork-alert-info .mosswork-alert-icon,
+.ant-alert-info .ant-alert-icon {
+  color: var(--fn-color-brand-soft) !important;
+}
+
+.mosswork-alert-warning,
+.ant-alert-warning {
+  background: color-mix(
+    in srgb,
+    var(--fn-color-brand) 10%,
+    transparent
+  ) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--fn-color-brand) 28%,
+    transparent
+  ) !important;
+}
+
+.mosswork-alert-warning .mosswork-alert-message,
+.mosswork-alert-warning .mosswork-alert-description,
+.mosswork-alert-warning .mosswork-alert-icon,
+.ant-alert-warning .ant-alert-message,
+.ant-alert-warning .ant-alert-description,
+.ant-alert-warning .ant-alert-icon {
+  color: var(--fn-color-brand-soft) !important;
+}
+
+/* Sudowork's primary action uses a brighter orange surface. */
+html[data-palette="amber"] .mosswork-btn-primary,
+html[data-palette="amber"] .ant-btn-primary,
+html:not([data-palette]) .mosswork-btn-primary,
+html:not([data-palette]) .ant-btn-primary {
+  background: #f97316 !important;
+  border-color: #f97316 !important;
+}
+
+html[data-palette="amber"] .mosswork-btn-primary:hover,
+html[data-palette="amber"] .ant-btn-primary:hover,
+html:not([data-palette]) .mosswork-btn-primary:hover,
+html:not([data-palette]) .ant-btn-primary:hover {
+  background: #ea580c !important;
+  border-color: #ea580c !important;
 }
 
 /* Chat paints to the screen edge; don't leak page-layout gray under the
@@ -310,6 +427,12 @@ html[data-theme="dark"] .ant-checkbox-inner,
 html[data-theme="dark"] .mosswork-ant-checkbox-inner {
   background-color: transparent !important;
   border-color: var(--fn-border-input) !important;
+}
+
+html[data-theme="dark"] .ant-checkbox-checked .ant-checkbox-inner,
+html[data-theme="dark"] .mosswork-checkbox-checked .mosswork-checkbox-inner {
+  background-color: var(--fn-color-brand) !important;
+  border-color: var(--fn-color-brand) !important;
 }
 
 /* Tabs */

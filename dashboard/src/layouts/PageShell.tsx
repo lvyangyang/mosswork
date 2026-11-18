@@ -102,9 +102,9 @@ function PageShell({
 }: PageShellProps) {
   const isMobile = useIsMobile();
   const { activeAgent } = useAgent();
-  const outerPad = isMobile ? 12 : 32;
-  const outerPadTop = isMobile ? 12 : 24;
-  const contentPad = isMobile ? 12 : 24;
+  const outerPad = isMobile ? 12 : 24;
+  const outerPadTop = isMobile ? 12 : 20;
+  const contentPad = isMobile ? 12 : 20;
   /** Fill layout, or mobile path-tabs that must stay pinned above the body. */
   const pinBody = Boolean(fill || (isMobile && pathTabs));
   /**
@@ -193,7 +193,9 @@ function PageShell({
         style={{
           flex: 1,
           background: "var(--fn-bg-container, var(--fn-bg-elevated))",
+          border: "1px solid var(--fn-border-secondary)",
           borderRadius: 8,
+          boxShadow: "var(--fn-shadow-xs)",
           padding: contentPad,
           paddingBottom: pinBody
             ? contentPad

@@ -4,7 +4,6 @@ import {
 } from "../../hooks/useCanonicalIdentity";
 import { CanonicalAccountScreen, CanonicalMemberLogin } from "./CanonicalLogin";
 import BootOfflinePanel from "../../components/BootOfflinePanel";
-import { productLogo } from "../../utils/branding";
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { Input, Button, Checkbox, Tabs, Spin } from "antd";
@@ -25,8 +24,7 @@ import {
 import { apiErrorMessage } from "../../utils/apiError";
 import { refreshServerLabels } from "../../i18n";
 import { applyUserLocale, applyGuestLocale } from "../../utils/locale";
-import { useTheme } from "../../context/ThemeContext";
-import EnterpriseBadge from "../../components/EnterpriseBadge";
+import BrandLockup from "../../components/BrandLockup";
 import {
   isSsoPopup,
   isSsoPopupMessage,
@@ -125,7 +123,6 @@ export function CanonicalMossLoginPage() {
 
 export function StandaloneLoginPage() {
   const { t } = useTranslation();
-  const { isDark } = useTheme();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [username, setUsername] = useState("");
@@ -303,7 +300,7 @@ export function StandaloneLoginPage() {
           onChange={(e) => setUsername(e.target.value)}
           autoFocus
           aria-describedby="login-username-hint"
-          style={{ borderRadius: 10 }}
+          style={{ borderRadius: 8 }}
         />
         <div
           id="login-username-hint"
@@ -327,7 +324,7 @@ export function StandaloneLoginPage() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onPressEnter={handleLogin}
-        style={{ borderRadius: 10 }}
+        style={{ borderRadius: 8 }}
       />
 
       {ldap?.enabled && (
@@ -359,13 +356,14 @@ export function StandaloneLoginPage() {
       />
 
       <Button
+        className={styles.submitButton}
         type="primary"
         size="large"
         block
         loading={loading}
         onClick={handleLogin}
         disabled={!username || !password || !captchaReady}
-        style={{ borderRadius: 10, height: 44, fontWeight: 500 }}
+        style={{ borderRadius: 8, height: 40, fontWeight: 500 }}
       >
         {t("login.submit")}
       </Button>
@@ -459,7 +457,7 @@ export function StandaloneLoginPage() {
               icon={providerIcon(provider)}
               loading={ssoLoadingKind === provider.kind}
               onClick={() => void onSso(provider.kind)}
-              style={{ borderRadius: 10, height: 44, fontWeight: 500 }}
+              style={{ borderRadius: 8, height: 40, fontWeight: 500 }}
             >
               {t("login.oidcWith", { name: providerLabel(provider, t) })}
             </Button>
@@ -488,15 +486,15 @@ export function StandaloneLoginPage() {
         style={{
           width: "100%",
           maxWidth: 360,
-          padding: "48px 32px 40px",
+          padding: "40px 28px 32px",
           background: "var(--fn-bg-elevated)",
-          borderRadius: 16,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.08)",
+          borderRadius: 12,
+          boxShadow: "var(--fn-shadow-lg)",
           border: "1px solid var(--fn-border-primary)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 20,
+          gap: 16,
           margin: "auto 16px",
         }}
       >
@@ -511,35 +509,15 @@ export function StandaloneLoginPage() {
         >
           <LanguageSwitcher guest />
         </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexWrap: "wrap",
-            gap: 10,
-          }}
-        >
-          <img
-            src={productLogo(isDark)}
-            alt={t("app.productName")}
-            style={{
-              height: 48,
-              width: "auto",
-              maxWidth: 260,
-              objectFit: "contain",
-              display: "block",
-            }}
-          />
-          <EnterpriseBadge />
-        </div>
+        <BrandLockup showEnterprise />
 
         {isCompanyDesktop() ? (
           <>
             <h2
               style={{
-                fontSize: 20,
+                fontSize: 24,
                 fontWeight: 600,
+                letterSpacing: "-0.02em",
                 color: "var(--fn-text-primary)",
                 margin: 0,
                 textAlign: "center",
@@ -547,6 +525,17 @@ export function StandaloneLoginPage() {
             >
               {t("login.title")}
             </h2>
+            <p
+              style={{
+                margin: "-8px 0 0",
+                color: "var(--fn-text-secondary)",
+                fontSize: 13,
+                lineHeight: 1.5,
+                textAlign: "center",
+              }}
+            >
+              {t("login.subtitle")}
+            </p>
 
             {loginForm}
           </>
