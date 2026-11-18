@@ -39,6 +39,9 @@ export interface RuntimeEvent {
   max_attempts?: number;
   error?: string;
   error_code?: string;
+  stage?: string;
+  retryable?: boolean;
+  action?: string;
   artifacts?: LocalArtifact[];
   sync_state?: "pending" | "synced";
   pid?: number;

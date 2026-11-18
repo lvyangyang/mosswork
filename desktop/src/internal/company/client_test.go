@@ -349,6 +349,36 @@ func TestReconnectUsesDeviceCredentialWithoutRePairing(t *testing.T) {
 	}
 }
 
+func TestRuntimeIdentityWaitsForTransientReconnect(t *testing.T) {
+	client := NewClient(t.TempDir())
+	client.mu.Lock()
+	client.status = Status{State: "reconnecting", DeviceID: "device", OwnerUserID: 7, ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	client.credential = "mosswork-device.test"
+	client.mu.Unlock()
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		client.mu.Lock()
+		client.status.State = "online"
+		client.mu.Unlock()
+	}()
+
+	status, credential, err := client.RuntimeIdentity()
+	if err != nil || status.State != "online" || credential != "mosswork-device.test" {
+		t.Fatalf("identity did not wait for reconnect: %+v %q %v", status, credential, err)
+	}
+}
+
+func TestRuntimeIdentityReportsExpiredDeviceCredential(t *testing.T) {
+	client := NewClient(t.TempDir())
+	client.mu.Lock()
+	client.status = Status{State: "disconnected", ExpiresAt: time.Now().Add(-time.Minute).Unix()}
+	client.mu.Unlock()
+	_, _, err := client.RuntimeIdentity()
+	if err == nil || err.Error() != "device_session_expired" {
+		t.Fatalf("unexpected identity error: %v", err)
+	}
+}
+
 func TestNativeGrantAndFileCallOverTLS(t *testing.T) {
 	replies := make(chan FileResult, 2)
 	client, base := testServer(t, func(ctx context.Context, conn *websocket.Conn, h hello, identity ready) {

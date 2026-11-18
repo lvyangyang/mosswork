@@ -55,7 +55,16 @@ function mountConnectionPanel(config) {
     const call = runtimePending.get(result.id);
     if (!call) return;
     runtimePending.delete(result.id); clearTimeout(call.timer);
-    if (result.error) call.reject(new Error(result.error)); else call.resolve(result.result);
+    if (result.error) {
+      const error = new Error(result.error);
+      Object.assign(error, {
+        errorCode: result.error_code,
+        stage: result.stage,
+        retryable: result.retryable,
+        action: result.action,
+      });
+      call.reject(error);
+    } else call.resolve(result.result);
   };
   window.__mossworkRuntimeEvent = (nonce, event) => {
     if (nonce !== config.nonce) return;
