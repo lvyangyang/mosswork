@@ -29,7 +29,7 @@ import { getApiUrl } from "../../../api/config";
 import { getAuthToken } from "../../../api/request";
 import { mossworkThreadsApi } from "../../../api/modules/mossworkThreads";
 import { isPendingThread } from "./useSessions";
-import type { TokenUsage } from "../../../api/types";
+import type { ProcessErrorInfo, TokenUsage } from "../../../api/types";
 import { contextUsageFromState } from "../utils/contextUsage";
 import { buildDashboardChatWsUrl } from "../../../api/modules/wsChat";
 import { rewritePeerSpeakerId } from "../../../utils/remoteExpert";
@@ -2582,6 +2582,7 @@ function appendErrorBubble(
   state: SessionStreamState,
   message: string,
   errorCode?: string,
+  details?: Pick<ProcessErrorInfo, "stage" | "retryable" | "action">,
 ): void {
   state.messages = [
     ...state.messages,
@@ -2592,6 +2593,7 @@ function appendErrorBubble(
       errorInfo: {
         code: errorCode || "stream_error",
         source: "frontend_stream",
+        ...details,
       },
       status: "error",
       timestamp: Date.now(),
@@ -2726,6 +2728,11 @@ async function attachLocalRuntime(
           state,
           event.error,
           event.error_code || "local_runtime_error",
+          {
+            stage: event.stage,
+            retryable: event.retryable,
+            action: event.action,
+          },
         );
       finish();
     }
@@ -2743,6 +2750,7 @@ async function attachLocalRuntime(
           state,
           event.error || "本地运行时已退出，请核对任务结果。",
           "local_runtime_error",
+          { stage: "runtime", retryable: false, action: "check_task_status" },
         );
       finish();
       return;
@@ -2787,6 +2795,11 @@ async function attachLocalRuntime(
         state,
         "上次本地任务中断，结果待核对。请检查已有成果后到设置中结束中断任务；系统不会自动重新执行。",
         "local_runtime_unknown",
+        {
+          stage: "task_reconcile",
+          retryable: false,
+          action: "check_task_status",
+        },
       );
       notify(state);
     }
@@ -3642,10 +3655,21 @@ export async function sendTurn(
       if (state.abortController !== controller || controller.signal.aborted)
         return;
       if (beforeEdit && !started) state.messages = beforeEdit;
+      const nativeError = error as Error & {
+        errorCode?: string;
+        stage?: string;
+        retryable?: boolean;
+        action?: string;
+      };
       appendErrorBubble(
         state,
         error instanceof Error ? error.message : "本地任务失败，请检查运行时。",
-        (error as { errorCode?: string }).errorCode || "local_runtime_error",
+        nativeError.errorCode || "local_runtime_error",
+        {
+          stage: nativeError.stage,
+          retryable: nativeError.retryable,
+          action: nativeError.action,
+        },
       );
     } finally {
       if (localAttachmentImports.get(sessionId) === controller)

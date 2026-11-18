@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -35,6 +36,7 @@ type Client struct {
 	credential string
 	cancel     context.CancelFunc
 	conn       *websocket.Conn
+	writeMu    sync.Mutex
 	httpClient *http.Client
 	files      *Files
 }
@@ -170,13 +172,22 @@ func (c *Client) run(ctx context.Context, base string, h hello, conn *websocket.
 		c.conn = nil
 		c.cancel = nil
 		if c.status.State != "unpaired" {
-			c.status = Status{State: "disconnected"}
+			if time.Now().Unix() >= identity.ExpiresAt {
+				// Preserve the expiry timestamp so a later runtime request can
+				// distinguish an expired credential from a transient disconnect.
+				status := c.status
+				status.State = "disconnected"
+				c.status = status
+			} else {
+				// Server rejection/revocation must clear the native identity.
+				c.status = Status{State: "disconnected"}
+			}
 		}
 		c.mu.Unlock()
 	}()
 	delay := time.Second
 	for {
-		err := serveFiles(ctx, conn, identity, h.Platform, c.files)
+		err := serveFiles(ctx, conn, identity, h.Platform, c.files, &c.writeMu)
 		conn.CloseNow()
 		if ctx.Err() != nil || time.Now().Unix() >= identity.ExpiresAt || errors.Is(err, errProtocol) {
 			return
@@ -235,7 +246,9 @@ func (c *Client) Close(revoke bool) {
 	c.mu.Unlock()
 	if conn != nil && revoke {
 		ctx, done := context.WithTimeout(context.Background(), time.Second)
+		c.writeMu.Lock()
 		_ = wsjson.Write(ctx, conn, map[string]string{"type": "revoke"})
+		c.writeMu.Unlock()
 		done()
 	}
 	if cancel != nil {
@@ -263,12 +276,15 @@ type frame struct {
 }
 
 func serve(parent context.Context, conn *websocket.Conn, identity ready, platform string) error {
-	return serveFiles(parent, conn, identity, platform, nil)
+	var writeMu sync.Mutex
+	return serveFiles(parent, conn, identity, platform, nil, &writeMu)
 }
 
-func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, platform string, files *Files) error {
+func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, platform string, files *Files, writeMu *sync.Mutex) error {
 	ctx, cancel := context.WithDeadline(parent, time.Unix(identity.ExpiresAt, 0))
 	defer cancel()
+	var lastHeartbeatAck atomic.Int64
+	lastHeartbeatAck.Store(time.Now().UnixNano())
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -277,8 +293,12 @@ func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, pl
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if time.Since(time.Unix(0, lastHeartbeatAck.Load())) > 30*time.Second {
+					cancel()
+					return
+				}
 				writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
-				err := wsjson.Write(writeCtx, conn, map[string]string{"type": "heartbeat"})
+				err := writeResult(writeCtx, conn, writeMu, map[string]any{"type": "heartbeat"})
 				done()
 				if err != nil {
 					cancel()
@@ -301,13 +321,14 @@ func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, pl
 		}
 		switch f.Type {
 		case "heartbeat_ack":
+			lastHeartbeatAck.Store(time.Now().UnixNano())
 			continue
 		case "cancel":
 			if stop, ok := fileCalls.Load(f.CallID); ok {
 				stop.(context.CancelFunc)()
 			}
 			if result, ok := completed[f.CallID]; ok {
-				if err := writeResult(ctx, conn, result); err != nil {
+				if err := writeResult(ctx, conn, writeMu, result); err != nil {
 					return err
 				}
 			}
@@ -334,12 +355,12 @@ func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, pl
 					go func(call frame) {
 						defer func() { <-slots; fileCalls.Delete(call.CallID); stop() }()
 						result := files.Execute(callCtx, call)
-						_ = writeResult(ctx, conn, map[string]any{"type": "result", "call_id": call.CallID, "result": result})
+						_ = writeResult(ctx, conn, writeMu, map[string]any{"type": "result", "call_id": call.CallID, "result": result})
 					}(f)
 				default:
 					stop()
 					fileCalls.Delete(f.CallID)
-					_ = writeResult(ctx, conn, map[string]any{"type": "result", "call_id": f.CallID, "result": failure("device_busy")})
+					_ = writeResult(ctx, conn, writeMu, map[string]any{"type": "result", "call_id": f.CallID, "result": failure("device_busy")})
 				}
 				continue
 			}
@@ -356,7 +377,7 @@ func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, pl
 				}
 				completed[f.CallID] = result
 			}
-			if err := writeResult(ctx, conn, result); err != nil {
+			if err := writeResult(ctx, conn, writeMu, result); err != nil {
 				return err
 			}
 		default:
@@ -366,20 +387,38 @@ func serveFiles(parent context.Context, conn *websocket.Conn, identity ready, pl
 	}
 }
 
-func writeResult(ctx context.Context, conn *websocket.Conn, result map[string]any) error {
+func writeResult(ctx context.Context, conn *websocket.Conn, writeMu *sync.Mutex, result map[string]any) error {
 	writeCtx, done := context.WithTimeout(ctx, 5*time.Second)
 	defer done()
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	return wsjson.Write(writeCtx, conn, result)
 }
 
 // RuntimeIdentity is native-only. Never bind this method to a WebView.
 func (c *Client) RuntimeIdentity() (Status, string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.status.State != "online" || c.credential == "" || c.status.ExpiresAt <= time.Now().Unix() {
-		return Status{}, "", errors.New("本地设备未连接公司服务，请在设置中重新连接")
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		c.mu.Lock()
+		status, credential := c.status, c.credential
+		c.mu.Unlock()
+		switch {
+		case status.State == "online" && credential != "" && status.ExpiresAt > time.Now().Unix():
+			return status, credential, nil
+		case status.ExpiresAt > 0 && status.ExpiresAt <= time.Now().Unix():
+			return Status{}, "", errors.New("device_session_expired")
+		case status.State == "reconnecting" || status.State == "connecting":
+			if time.Now().Before(deadline) {
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			return Status{}, "", errors.New("device_reconnecting_timeout")
+		case status.State == "unpaired":
+			return Status{}, "", errors.New("device_unpaired")
+		default:
+			return Status{}, "", errors.New("device_disconnected")
+		}
 	}
-	return c.status, c.credential, nil
 }
 
 // CompanyPost performs one native-only authenticated request to the company

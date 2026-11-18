@@ -71,6 +71,21 @@ func TestRuntimeErrorTranslationPreservesCode(t *testing.T) {
 	}
 }
 
+func TestRuntimeDeviceErrorsHaveActionableClassification(t *testing.T) {
+	if got := runtimeErrorCode("device_session_expired"); got != "device_session_expired" {
+		t.Fatalf("unexpected device code: %s", got)
+	}
+	if got := runtimeErrorStage("device_reconnecting_timeout"); got != "device_connection" {
+		t.Fatalf("unexpected device stage: %s", got)
+	}
+	if !runtimeErrorRetryable("device_reconnecting_timeout") {
+		t.Fatal("reconnect timeout should be retryable")
+	}
+	if got := runtimeErrorAction("workspace_file_locked"); got != "close_file_and_retry" {
+		t.Fatalf("unexpected locked-file action: %s", got)
+	}
+}
+
 func TestCompanyRuntimeAccountDirectoriesAreIsolated(t *testing.T) {
 	t.Setenv("MOSSWORK_HOME", t.TempDir())
 	a := companyStateDir("https://one", 1)

@@ -36,6 +36,9 @@ type Message struct {
 	Artifacts   json.RawMessage `json:"artifacts,omitempty"`
 	ErrorCode   string          `json:"error_code,omitempty"`
 	Phase       string          `json:"phase,omitempty"`
+	Stage       string          `json:"stage,omitempty"`
+	Retryable   *bool           `json:"retryable,omitempty"`
+	Action      string          `json:"action,omitempty"`
 }
 type Process struct {
 	cmd       *exec.Cmd
